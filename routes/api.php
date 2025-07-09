@@ -44,11 +44,20 @@ Route::group([
     Route::get('user/orders', [ServiceController::class, "get_orders"])->name("api:get_orders");
     Route::get('user/order', [ServiceController::class, "get_order"])->name("api:get_order");
     Route::get('user/services', [ServiceController::class, "get_my_services"])->name("api:get_my_services");
-    Route::get('user/notifications', [ServiceController::class, "get_notifications"])->name("api:get_notifications");
-    Route::get('user/balance', [ServiceController::class, "get_balance"])->name("api:get_balance");
-    Route::post('user/balance/withdraw', [ServiceController::class, "withdraw_balance"])->name("api:withdraw_balance");
-    Route::get('user/balance/withdraw/requests', [ServiceController::class, "check_withdraw_status"])->name("api:check_withdraw_status");
 
+    // Notifications - Enhanced with new/read tracking
+    Route::get('user/notifications', [ServiceController::class, "get_notifications"])->name("api:get_notifications");
+    Route::get('user/notifications/count/new', [ServiceController::class, 'get_new_notifications_count'])->name("api:get_new_notifications_count");
+    Route::get('user/notifications/count/unread', [ServiceController::class, 'get_unread_notifications_count'])->name("api:get_unread_notifications_count");
+    Route::post('user/notifications/mark-seen', [ServiceController::class, 'mark_notifications_as_seen'])->name("api:mark_notifications_as_seen");
+    Route::post('user/notifications/mark-read', [ServiceController::class, 'mark_notifications_as_read'])->name("api:mark_notifications_as_read");
+    Route::post('user/notifications/mark-all-read', [ServiceController::class, 'mark_all_notifications_as_read'])->name("api:mark_all_notifications_as_read");
+
+        Route::get('user/balance', [ServiceController::class, "get_balance"])->name("api:get_balance");
+        Route::post('user/balance/withdraw', [ServiceController::class, "withdraw_balance"])->name("api:withdraw_balance");
+        Route::get('user/balance/withdraw/requests', [ServiceController::class, "check_withdraw_status"])->name("api:check_withdraw_status");
+        Route::get('user/earnings/history', [ServiceController::class, 'get_earnings_history'])->name("api:get_earnings_history");
+        Route::get('user/earnings/summary', [ServiceController::class, 'get_earnings_summary'])->name("api:get_earnings_summary");
     Route::get('service/orders', [ServiceController::class, "get_service_orders"])->name("api:get_service_orders");
 
     Route::post('service/order/complete', [ServiceController::class, "complete_order"])->name("api:complete_order");
@@ -106,6 +115,5 @@ Route::group([
     
     Route::post('password/reset/code', [SmsPasswordResetController::class, 'sendResetCode']);  // Send SMS reset code
     Route::post('password/reset', [SmsPasswordResetController::class, 'resetPassword']);  
-    Route::post('deleteAcount', [AuthController::class, "delete_account"])->name("api:delete_account");
-
+    Route::post('deleteAccount', [AuthController::class, "delete_account"])->middleware('auth:api')->name("api:delete_account");
 });

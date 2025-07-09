@@ -10,7 +10,11 @@ use Illuminate\Support\Facades\Auth;
 use App\Models\AppSetting;
 use Twilio\Rest\Client;
 use App\Mail\OtpMail;
+use App\Mail\AccountDeletionMail;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class AuthController extends Controller
 {
@@ -24,46 +28,45 @@ class AuthController extends Controller
         $this->middleware('auth:api', ['except' => ['login', "register", "sendVerificationCode", "verifyAccount"]]);
     }
 
-
     /**
      * edit
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function edit( Request $request)
+    public function edit(Request $request)
     {
         $validation = $request->validate([
             'email' => 'email|unique:users,email',
             'password' => 'string',
             'phone' => 'numeric',
-            // 'type' => 'in:customer,worker',
             'location' => 'string',
             'city' => 'string',
             'country' => 'string',
             'full_name' => 'string',
             "picture" => "file",
         ]);
-        if(isset( $validation["password"] )) $validation["password"] = bcrypt($validation["password"]);
+        
+        if(isset($validation["password"])) {
+            $validation["password"] = bcrypt($validation["password"]);
+        }
+        
         $validation["id"] = auth("api")->user()->id;
+        
         if($request->file('picture')){
             $file = $request->file('picture');
             $temp = $file->store('public/images');
             $_array = explode("/", $temp);
-            $file_name = $_array[ sizeof($_array) -1 ];
+            $file_name = $_array[sizeof($_array) - 1];
             $validation["picture"] = $file_name;
         }
 
         if ($validation) {
-
             User::where([["id", "=", auth("api")->user()->id]])->update($validation);
             $updated = Auth("api")->user()->fresh();
             return response()->json($updated);
-
-        }else{
-            $errors = $validator->errors();
-            return response()->json(['error' => 'Bad Request', 'details' => $errors], 400);
+        } else {
+            return response()->json(['error' => 'Bad Request'], 400);
         }
-
     }
 
     /**
@@ -71,7 +74,7 @@ class AuthController extends Controller
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function register( Request $request)
+    public function register(Request $request)
     {
         $validation = $request->validate([
             'email' => 'email|required|unique:users,email',
@@ -84,43 +87,51 @@ class AuthController extends Controller
             "device_token" => "required",
             "picture" => "file|sometimes",
         ]);
-         if(isset( $validation["password"] )) $validation["password"] = bcrypt($validation["password"]);
+        
+        if(isset($validation["password"])) {
+            $validation["password"] = bcrypt($validation["password"]);
+        }
+        
         if($request->file('picture')){
             $file = $request->file('picture');
             $temp = $file->store('public/images');
             $_array = explode("/", $temp);
-            $file_name = $_array[ sizeof($_array) -1 ];
+            $file_name = $_array[sizeof($_array) - 1];
             $validation["picture"] = $file_name;
-        }else{
-            $customer = AppSetting::Where("key", "=", "customer-image");
-            $provider = AppSetting::Where("key", "=", "provider-image");
+        } else {
+            $customer = AppSetting::where("key", "=", "customer-image");
+            $provider = AppSetting::where("key", "=", "provider-image");
             $customer_image = "";
             $provider_image = "";
-            if($customer->count() > 0){$customer_image = $customer->first()->value;}
-            if($provider->count() > 0){$provider_image = $provider->first()->value;}
-            if($validation["type"] == "worker") $validation["picture"] = $provider_image;
-            if($validation["type"] != "worker") $validation["picture"] = $customer_image;
-        
+            
+            if($customer->count() > 0) {
+                $customer_image = $customer->first()->value;
+            }
+            if($provider->count() > 0) {
+                $provider_image = $provider->first()->value;
+            }
+            
+            if($validation["type"] == "worker") {
+                $validation["picture"] = $provider_image;
+            } else {
+                $validation["picture"] = $customer_image;
+            }
         }
-
 
         if ($validation) {
             $user = User::create($validation);
             $token = $this->createOtpCode($user->email);
             $this->sendOtpCode($user->email, $token);
             return response()->json(['message' => 'Successfully created account, Otp code is sent to email']);
-            // return $this->respondWithToken(auth("api")->login($user));
-        }else{
-            $errors = $validator->errors();
-            return response()->json(['error' => 'Bad Request', 'details' => $errors], 400);
+        } else {
+            return response()->json(['error' => 'Bad Request'], 400);
         }
-
     }
 
-    public function sendVerificationCode( Request $request){
+    public function sendVerificationCode(Request $request)
+    {
         $request->validate([
-            // 'phone' => 'required|numeric',  // Ensure it's a valid phone number
-            'email' => 'required|string',  // Ensure it's a valid phone number
+            'email' => 'required|string',
         ]);
 
         $user = User::where('email', $request->email)->first();
@@ -128,29 +139,25 @@ class AuthController extends Controller
         if (!$user) {
             return response()->json(['message' => 'User not found'], 404);
         }
+        
         $token = $this->createOtpCode($request->email);
         $sent_otp = $this->sendOtpCode($user->email, $token);
-        // if($sent_otp){
 
-            return response()->json(['message' => 'Otp code sent via email']);
-        // }else{
-            // return response()->json(['message' => 'Unable to sent Otp Code']);
-        // }
+        return response()->json(['message' => 'Otp code sent via email']);
     }
 
-        // Verify the reset code and reset the password
+    // Verify the reset code and reset the password
     public function verifyAccount(Request $request)
     {
         $request->validate([
             'phone' => 'required_if:email,null|numeric',
             'email' => 'required_if:phone,null',
             'otp' => 'required|numeric',
-            // 'password' => 'required',
         ]);
 
         if($request->phone){
             $user = User::where('phone', $request->phone)->first();
-        }else{
+        } else {
             $user = User::where('email', $request->email)->first();
         }
 
@@ -163,15 +170,13 @@ class AuthController extends Controller
             return response()->json(['message' => 'Invalid or expired reset token'], 400);
         }
 
-        
         $user->update([
-            'reset_token' => null, // Clear the reset token
-            'reset_token_expiry' => null, // Clear the token expiry
+            'reset_token' => null,
+            'reset_token_expiry' => null,
             'verified' => true
         ]);
 
         return $this->respondWithToken(auth("api")->login($user));
-        // return response()->json(['message' => 'Password reset successfully']);
     }
 
     /**
@@ -179,16 +184,22 @@ class AuthController extends Controller
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function login( )
+    public function login()
     {
         $credentials = request(['email', 'password']);
-        $user = User::Where("email", "=", $credentials["email"]);
-        if( $user->count() > 0 && $user->first()["blocked"] == true ) return response()->json(['error' => 'Account is blocked'], 403);
-        if( $user->count() > 0 && $user->first()["verified"] == false ) return response()->json(['error' => 'Account is not verified'], 401);
+        $user = User::where("email", "=", $credentials["email"]);
+        
+        if($user->count() > 0 && $user->first()["blocked"] == true) {
+            return response()->json(['error' => 'Account is blocked'], 403);
+        }
+        if($user->count() > 0 && $user->first()["verified"] == false) {
+            return response()->json(['error' => 'Account is not verified'], 401);
+        }
 
-        if (! $token = auth("api")->attempt($credentials)) {
+        if (!$token = auth("api")->attempt($credentials)) {
             return response()->json(['error' => 'Unauthorized'], 401);
         }
+        
         $user->update(["device_token" => request("device_token")]);
 
         return $this->respondWithToken($token);
@@ -202,29 +213,266 @@ class AuthController extends Controller
     public function me()
     {
         $user = auth("api")->user();
-        $_active = Service::Where([["user_id", "=", $user["id"]]]);
+        $_active = Service::where([["user_id", "=", $user["id"]]]);
         $active = false;
-        if($_active->count() > 0 ){
+        
+        if($_active->count() > 0) {
             $active = $_active->first()->active;
         }
+        
         $user["active"] = $active;
         unset($user["verified_liscence"]);
         unset($user["location"]);
+        
         return response()->json($user);
     }
 
     /**
-     * Get the authenticated User.
+     * Delete user account permanently with comprehensive cleanup
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function delete_account()
+    public function delete_account(Request $request)
     {
-        $user = auth("api")->user();
-        $user->delete();
-        return response()->json([
-            "message" => "Successfully deleted account"
+        // Validate the request
+        $validation = $request->validate([
+            'reason' => 'required|string|max:255',
+            'additional_feedback' => 'nullable|string|max:1000',
         ]);
+
+        $user = auth("api")->user();
+        
+        if (!$user) {
+            return response()->json([
+                'message' => 'User not found',
+                'success' => false
+            ], 404);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            // Log the account deletion for audit purposes
+            Log::info('Account deletion requested', [
+                'user_id' => $user->id,
+                'user_email' => $user->email,
+                'user_type' => $user->type,
+                'reason' => $validation['reason'],
+                'additional_feedback' => $validation['additional_feedback'] ?? null,
+                'deleted_at' => now()
+            ]);
+
+            // Store deletion information before cleanup (optional - for compliance/audit)
+            $this->storeDeletionRecord($user, $validation);
+
+            // Store user info for email before deletion
+            $userEmail = $user->email;
+            $userFullName = $user->full_name;
+            $userType = $user->type;
+
+            // Comprehensive cleanup based on user type
+            $this->cleanupUserData($user);
+
+            // Delete the user account
+            $user->delete();
+
+            DB::commit();
+
+            // Send account deletion confirmation email (after successful deletion)
+            try {
+                $this->sendAccountDeletionConfirmation($userEmail, $userFullName, $userType);
+            } catch (\Exception $emailException) {
+                // Log email error but don't fail the deletion
+                Log::warning('Failed to send deletion confirmation email', [
+                    'user_email' => $userEmail,
+                    'error' => $emailException->getMessage()
+                ]);
+            }
+
+            return response()->json([
+                'message' => 'Account deleted successfully. We\'re sorry to see you go!',
+                'success' => true,
+                'deleted_at' => now()->toISOString()
+            ], 200);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            Log::error('Account deletion failed', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to delete account. Please try again later.',
+                'success' => false
+            ], 500);
+        }
+    }
+
+    /**
+     * Store deletion record for audit/compliance purposes
+     */
+    private function storeDeletionRecord($user, $validation)
+    {
+        try {
+            // Create a deletion record table if needed for GDPR compliance
+            DB::table('account_deletions')->insert([
+                'user_id' => $user->id,
+                'user_email' => $user->email,
+                'user_type' => $user->type,
+                'deletion_reason' => $validation['reason'],
+                'additional_feedback' => $validation['additional_feedback'] ?? null,
+                'deleted_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now()
+            ]);
+        } catch (\Exception $e) {
+            // Don't fail the deletion if audit logging fails
+            Log::warning('Failed to store deletion record', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Comprehensive cleanup of user-related data
+     */
+    private function cleanupUserData($user)
+    {
+        try {
+            // Delete user's profile picture if it exists and is not a default image
+            if ($user->picture && !$this->isDefaultImage($user->picture)) {
+                Storage::delete('public/images/' . $user->picture);
+            }
+
+            // Cleanup based on user type
+            if ($user->type === 'worker') {
+                $this->cleanupWorkerData($user);
+            } else {
+                $this->cleanupCustomerData($user);
+            }
+
+            // Delete general user-related data
+            $this->cleanupGeneralUserData($user);
+
+        } catch (\Exception $e) {
+            Log::error('User data cleanup failed', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            throw $e; // Re-throw to trigger rollback
+        }
+    }
+
+/**
+ * Cleanup worker-specific data
+ */
+private function cleanupWorkerData($user)
+{
+    // Get all service IDs for this worker
+    $serviceIds = DB::table('services')->where('user_id', $user->id)->pluck('id')->toArray();
+    
+    if (!empty($serviceIds)) {
+        // Delete service_earnings for orders placed on their services
+        DB::statement("DELETE FROM service_earnings WHERE order_id IN (SELECT id FROM 'order' WHERE service_id IN (" . implode(',', $serviceIds) . "))");
+        
+        // Delete orders placed for their services
+        DB::table('order')->whereIn('service_id', $serviceIds)->delete();
+        
+        // Delete ratings received on their services
+        DB::table('rating')->whereIn('service_id', $serviceIds)->delete();
+        
+        // Delete service gallery images
+        foreach ($serviceIds as $serviceId) {
+            $galleries = ServiceGallary::where('service_id', $serviceId)->get();
+            foreach ($galleries as $gallery) {
+                if ($gallery->image) {
+                    Storage::delete('public/images/' . $gallery->image);
+                }
+            }
+            ServiceGallary::where('service_id', $serviceId)->delete();
+        }
+        
+        // Finally delete the services themselves
+        Service::where('user_id', $user->id)->delete();
+    }
+}
+
+    /**
+     * Cleanup customer-specific data
+     */
+    private function cleanupCustomerData($user)
+    {
+        // Delete customer-specific data if needed
+        // Add your customer-specific cleanup logic here
+    }
+
+/**
+ * Cleanup general user data (applies to both customer and worker)
+ */
+private function cleanupGeneralUserData($user)
+{
+    // Delete service_earnings records tied to this user's orders first
+    DB::statement("DELETE FROM service_earnings WHERE order_id IN (SELECT id FROM 'order' WHERE user_id = ?)", [$user->id]);
+    
+    // Delete user's direct service_earnings (if any)
+    DB::table('service_earnings')->where('user_id', $user->id)->delete();
+    
+    // Now we can safely delete the orders
+    DB::table('order')->where('user_id', $user->id)->delete();
+    
+    // Delete user's ratings
+    DB::table('rating')->where('user_id', $user->id)->delete();
+    
+    // Delete user's withdraw requests
+    DB::table('withdraw_requests')->where('user_id', $user->id)->delete();
+}
+
+
+    /**
+     * Check if the image is a default system image
+     */
+    private function isDefaultImage($imageName)
+    {
+        $defaultImages = [];
+        
+        // Get default customer image
+        $customerImage = AppSetting::where("key", "=", "customer-image")->first();
+        if ($customerImage) {
+            $defaultImages[] = $customerImage->value;
+        }
+        
+        // Get default provider image
+        $providerImage = AppSetting::where("key", "=", "provider-image")->first();
+        if ($providerImage) {
+            $defaultImages[] = $providerImage->value;
+        }
+        
+        return in_array($imageName, $defaultImages);
+    }
+
+    /**
+     * Send account deletion confirmation email
+     */
+    private function sendAccountDeletionConfirmation($userEmail, $userFullName, $userType)
+    {
+        try {
+            Mail::to($userEmail)->send(new AccountDeletionMail($userFullName, $userType));
+            
+            Log::info('Account deletion confirmation email sent', [
+                'email' => $userEmail
+            ]);
+        } catch (\Exception $e) {
+            // Log the error and re-throw it
+            Log::warning('Failed to send deletion confirmation email', [
+                'email' => $userEmail,
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
     }
 
     /**
@@ -235,7 +483,6 @@ class AuthController extends Controller
     public function logout()
     {
         auth("api")->logout();
-
         return response()->json(['message' => 'Successfully logged out']);
     }
 
@@ -249,7 +496,8 @@ class AuthController extends Controller
         return $this->respondWithToken(auth("api")->refresh());
     }
 
-    protected function sendOtpCode($email, $token){
+    protected function sendOtpCode($email, $token)
+    {
         $this->sendEmail($email, "Your Otp code is: $token");
     }
 
@@ -283,45 +531,15 @@ class AuthController extends Controller
         ]);
     }
 
-     // Helper function to send SMS using Twilio
+    // Helper function to send SMS using Twilio
     protected function sendSms($to, $message)
     {
-        // some sms sending method
-        // return response()->json[["to"=>$to, 'message'=>$message]];
-        // $sid = env('TWILIO_SID');
-        // $auth_token = env('TWILIO_AUTH_TOKEN');
-        // $from = env('TWILIO_PHONE_NUMBER');
-
-        // $client = new Client($sid, $auth_token);
-
-        // $client->messages->create(
-        //     $to, // To phone number
-        //     [
-        //         'from' => $from,  // From Twilio phone number
-        //         'body' => $message
-        //     ]
-        // );
+        // SMS sending implementation
     }
 
-    // Helper function to send SMS using Twilio
+    // Helper function to send email
     protected function sendEmail($to, $message)
     {
-
         Mail::to($to)->send(new OtpMail($message));
-        // some sms sending method
-        // return response()->json[["to"=>$to, 'message'=>$message]];
-        // $sid = env('TWILIO_SID');
-        // $auth_token = env('TWILIO_AUTH_TOKEN');
-        // $from = env('TWILIO_PHONE_NUMBER');
-
-        // $client = new Client($sid, $auth_token);
-
-        // $client->messages->create(
-        //     $to, // To phone number
-        //     [
-        //         'from' => $from,  // From Twilio phone number
-        //         'body' => $message
-        //     ]
-        // );
     }
 }
