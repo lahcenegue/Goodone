@@ -84,7 +84,7 @@ class AuthController extends Controller
             'full_name' => 'required',
             'city' => 'string',
             'country' => 'string',
-            "device_token" => "required",
+            "device_token" => "nullable|string",
             "picture" => "file|sometimes",
         ]);
         
@@ -200,7 +200,9 @@ class AuthController extends Controller
             return response()->json(['error' => 'Unauthorized'], 401);
         }
         
-        $user->update(["device_token" => request("device_token")]);
+        if (request("device_token")) {
+            $user->update(["device_token" => request("device_token")]);
+        }
 
         return $this->respondWithToken($token);
     }
