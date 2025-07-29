@@ -15,6 +15,9 @@ use App\Models\Rating;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
+use App\Models\Admin;
 
 class AdminController extends Controller
 {
@@ -668,4 +671,95 @@ class AdminController extends Controller
     }
 
     
+/**
+ * Show admin login form
+ */
+public function showLoginForm()
+{
+    // If already logged in as admin, redirect to dashboard
+    if (Auth::guard('admin')->check()) {
+        return redirect()->route('admin_home');
+    }
+    
+    return view('admin.login');
+}
+
+/**
+ * Handle admin login
+ */
+public function login(Request $request)
+{
+    $credentials = $request->validate([
+        'email' => 'required|email',
+        'password' => 'required|string',
+    ]);
+
+    // Add rate limiting for security (prevents brute force attacks)
+    $key = 'admin_login_attempts:' . $request->ip();
+    $maxAttempts = 5;
+    $decayMinutes = 15;
+
+    if (cache()->has($key) && cache()->get($key) >= $maxAttempts) {
+        return back()->withErrors([
+            'email' => 'Too many login attempts. Please try again in ' . $decayMinutes . ' minutes.'
+        ])->withInput($request->only('email'));
+    }
+
+    // Try to authenticate using admin guard
+    if (Auth::guard('admin')->attempt($credentials, $request->filled('remember'))) {
+        $admin = Auth::guard('admin')->user();
+        
+        // Check if admin is active
+        if (!$admin->active) {
+            Auth::guard('admin')->logout();
+            $this->incrementLoginAttempts($key);
+            
+            return back()->withErrors([
+                'email' => 'Admin account is deactivated.'
+            ])->withInput($request->only('email'));
+        }
+
+        // Clear login attempts on successful login
+        cache()->forget($key);
+        
+        // Regenerate session for security
+        $request->session()->regenerate();
+        
+        // Update last login time
+        $admin->update(['last_login_at' => now()]);
+        
+        return redirect()->intended(route('admin_home'));
+    }
+
+    // Failed login - increment attempts
+    $this->incrementLoginAttempts($key);
+    
+    return back()->withErrors([
+        'email' => 'Invalid email or password.'
+    ])->withInput($request->only('email'));
+}
+
+/**
+ * Logout admin
+ */
+public function logout(Request $request)
+{
+    Auth::guard('admin')->logout();
+    
+    $request->session()->invalidate();
+    $request->session()->regenerateToken();
+    
+    return redirect()->route('admin.login.form')
+                   ->with('message', 'Successfully logged out.');
+}
+
+/**
+ * Helper method to increment login attempts (prevents brute force)
+ */
+private function incrementLoginAttempts($key)
+{
+    $attempts = cache()->get($key, 0) + 1;
+    cache()->put($key, $attempts, now()->addMinutes(15));
+}
+
 }

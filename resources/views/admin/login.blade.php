@@ -53,7 +53,7 @@
             // ];
             // }
         @endphp
-        @include('admin.forms', ["title" => "Login", "wrapper" => $wrapper, "data" => $data, "type" => "multi_fields_card_builder", "action" => route("admin_login"), "enctype" => "", "method" => "POST" ])
+        @include('admin.forms', ["title" => "Login", "wrapper" => $wrapper, "data" => $data, "type" => "multi_fields_card_builder", "action" => route("admin.login"), "enctype" => "", "method" => "POST" ])
       </div>
       <div class="row">
         {{-- @include('admin.tables', ["title" => "Teams", "headers" =>  $table_headers, "data" => $table_data]); --}}
