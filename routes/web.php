@@ -88,5 +88,6 @@ Route::middleware(['admin.auth'])->group(function () {
     // Orders and Transactions
     Route::get('/admin/orders', [AdminController::class, "get_orders"])->name("admin_get_orders");
     Route::get('/admin/transactions/{user}', [AdminController::class, "get_transactions"])->name("admin_get_transactions");
+    Route::get('/admin/platform-statistics', [AdminController::class, 'platform_statistics'])->name('admin_platform_statistics');
 
 });
