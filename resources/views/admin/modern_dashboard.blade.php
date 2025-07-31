@@ -1,361 +1,611 @@
 @extends('admin.layouts')
 
+@section('page-title', 'Dashboard')
+@section('page-subtitle', 'Welcome back! Here\'s what\'s happening with your Goodone platform today.')
+
 @section('content')
-<div class="container-xxl flex-grow-1 container-p-y">
-    <!-- Header with Welcome Message and Quick Actions -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card bg-primary text-white">
-                <div class="card-body">
-                    <div class="row align-items-center">
-                        <div class="col-md-8">
-                            <h4 class="card-title text-white mb-1">Welcome back, Administrator!</h4>
-                            <p class="mb-0">Here's what's happening with your Goodone platform today.</p>
-                        </div>
-                        <div class="col-md-4 text-end">
-                            <form method="POST" action="{{ route('admin.logout') }}" class="d-inline">
-                                @csrf
-                                <button type="submit" class="btn btn-outline-light">
-                                    <i class="bx bx-log-out me-1"></i> Logout
-                                </button>
-                            </form>
-                        </div>
-                    </div>
-                </div>
+<style>
+    /* Modern Dashboard Styles */
+    .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    .stats-card {
+        background: white;
+        border-radius: 16px;
+        padding: 1.5rem;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        border: 1px solid #e2e8f0;
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .stats-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.1);
+    }
+
+    .stats-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, #667eea, #764ba2);
+    }
+
+    .stats-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 1rem;
+    }
+
+    .stats-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+        color: white;
+    }
+
+    .stats-icon.primary {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+    }
+
+    .stats-icon.success {
+        background: linear-gradient(135deg, #4ade80, #22c55e);
+    }
+
+    .stats-icon.warning {
+        background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    }
+
+    .stats-icon.danger {
+        background: linear-gradient(135deg, #ef4444, #dc2626);
+    }
+
+    .stats-icon.info {
+        background: linear-gradient(135deg, #3b82f6, #2563eb);
+    }
+
+    .stats-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #1a202c;
+        margin-bottom: 0.25rem;
+    }
+
+    .stats-label {
+        color: #718096;
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+
+    .stats-trend {
+        display: flex;
+        align-items: center;
+        font-size: 0.8rem;
+        margin-top: 0.5rem;
+    }
+
+    .trend-up {
+        color: #22c55e;
+    }
+
+    .trend-down {
+        color: #ef4444;
+    }
+
+    .trend-neutral {
+        color: #718096;
+    }
+
+    /* Chart Cards */
+    .chart-card {
+        background: white;
+        border-radius: 16px;
+        padding: 1.5rem;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        border: 1px solid #e2e8f0;
+        margin-bottom: 1.5rem;
+    }
+
+    .chart-header {
+        display: flex;
+        justify-content: between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid #e2e8f0;
+    }
+
+    .chart-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #1a202c;
+        margin: 0;
+    }
+
+    .chart-subtitle {
+        color: #718096;
+        font-size: 0.875rem;
+        margin-top: 0.25rem;
+    }
+
+    /* Recent Activity */
+    .activity-item {
+        display: flex;
+        align-items: center;
+        padding: 1rem;
+        border-bottom: 1px solid #f7fafc;
+        transition: background-color 0.2s ease;
+    }
+
+    .activity-item:hover {
+        background-color: #f8fafc;
+    }
+
+    .activity-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 1rem;
+        font-size: 1rem;
+    }
+
+    .activity-content {
+        flex: 1;
+    }
+
+    .activity-title {
+        font-weight: 600;
+        color: #2d3748;
+        margin-bottom: 0.25rem;
+    }
+
+    .activity-time {
+        color: #718096;
+        font-size: 0.875rem;
+    }
+
+    /* Quick Actions */
+    .quick-actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .action-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 1.5rem;
+        background: white;
+        border: 2px solid #e2e8f0;
+        border-radius: 12px;
+        text-decoration: none;
+        color: #4a5568;
+        transition: all 0.3s ease;
+        text-align: center;
+    }
+
+    .action-btn:hover {
+        border-color: #667eea;
+        background: #f8fafc;
+        transform: translateY(-1px);
+        text-decoration: none;
+        color: #667eea;
+    }
+
+    .action-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #f7fafc, #edf2f7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 1rem;
+        font-size: 1.5rem;
+        color: #667eea;
+    }
+
+    .action-title {
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+    }
+
+    .action-subtitle {
+        font-size: 0.875rem;
+        color: #718096;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .dashboard-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .quick-actions {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    /* Status badges */
+    .status-badge {
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .status-success {
+        background: #dcfce7;
+        color: #166534;
+    }
+
+    .status-warning {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .status-danger {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    .status-info {
+        background: #dbeafe;
+        color: #1e40af;
+    }
+</style>
+
+<!-- Dashboard Content -->
+<div class="dashboard-container">
+    <!-- Welcome Banner -->
+    <div class="chart-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin-bottom: 2rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h2 style="color: white; margin: 0; font-size: 1.75rem; font-weight: 700;">
+                    Welcome back, Administrator! 👋
+                </h2>
+                <p style="opacity: 0.9; margin: 0.5rem 0 0 0; font-size: 1rem;">
+                    Here's what's happening with your Goodone platform today.
+                </p>
+            </div>
+            <div style="text-align: right;">
+                <div style="font-size: 0.875rem; opacity: 0.8;">{{ now()->format('l, F j, Y') }}</div>
+                <div style="font-size: 1rem; font-weight: 600; margin-top: 0.25rem;">{{ now()->format('H:i') }}</div>
             </div>
         </div>
     </div>
 
     <!-- Statistics Cards -->
-    <div class="row mb-4">
+    <div class="dashboard-grid">
         <!-- Users Today -->
-        <div class="col-xl-3 col-md-6 mb-4">
-            <div class="card border-left-primary shadow h-100 py-2">
-                <div class="card-body">
-                    <div class="row no-gutters align-items-center">
-                        <div class="col mr-2">
-                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
-                                New Customers Today
-                            </div>
-                            <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                {{ $day_stats['users'] ?? 0 }}
-                            </div>
-                            @if(isset($day_stats['users_difference']))
-                            <div class="text-xs {{ $day_stats['users_difference'] >= 0 ? 'text-success' : 'text-danger' }}">
-                                <i class="bx {{ $day_stats['users_difference'] >= 0 ? 'bx-trending-up' : 'bx-trending-down' }}"></i>
-                                {{ number_format(abs($day_stats['users_difference']), 1) }}% vs yesterday
-                            </div>
-                            @endif
-                        </div>
-                        <div class="col-auto">
-                            <i class="bx bx-user-plus bx-lg text-primary"></i>
-                        </div>
-                    </div>
+        <div class="stats-card">
+            <div class="stats-header">
+                <div>
+                    <div class="stats-value">{{ $day_stats['users'] ?? 0 }}</div>
+                    <div class="stats-label">New Customers Today</div>
                 </div>
-                <div class="card-footer bg-light">
-                    <a href="{{ route('admin_get_users') }}" class="btn btn-primary btn-sm">View All Customers</a>
+                <div class="stats-icon primary">
+                    <i class="fas fa-user-plus"></i>
                 </div>
             </div>
+            @if(isset($day_stats['users_difference']))
+            <div class="stats-trend {{ $day_stats['users_difference'] >= 0 ? 'trend-up' : 'trend-down' }}">
+                <i class="fas {{ $day_stats['users_difference'] >= 0 ? 'fa-arrow-up' : 'fa-arrow-down' }}"></i>
+                <span style="margin-left: 0.25rem;">{{ number_format(abs($day_stats['users_difference']), 1) }}% vs yesterday</span>
+            </div>
+            @endif
         </div>
 
         <!-- Services Today -->
-        <div class="col-xl-3 col-md-6 mb-4">
-            <div class="card border-left-success shadow h-100 py-2">
-                <div class="card-body">
-                    <div class="row no-gutters align-items-center">
-                        <div class="col mr-2">
-                            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-                                New Services Today
-                            </div>
-                            <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                {{ $day_stats['services'] ?? 0 }}
-                            </div>
-                            @if(isset($day_stats['services_difference']))
-                            <div class="text-xs {{ $day_stats['services_difference'] >= 0 ? 'text-success' : 'text-danger' }}">
-                                <i class="bx {{ $day_stats['services_difference'] >= 0 ? 'bx-trending-up' : 'bx-trending-down' }}"></i>
-                                {{ number_format(abs($day_stats['services_difference']), 1) }}% vs yesterday
-                            </div>
-                            @endif
-                        </div>
-                        <div class="col-auto">
-                            <i class="bx bx-briefcase bx-lg text-success"></i>
-                        </div>
-                    </div>
+        <div class="stats-card">
+            <div class="stats-header">
+                <div>
+                    <div class="stats-value">{{ $day_stats['services'] ?? 0 }}</div>
+                    <div class="stats-label">New Services Today</div>
                 </div>
-                <div class="card-footer bg-light">
-                    <a href="{{ route('admin_get_services') }}" class="btn btn-success btn-sm">Manage All Services</a>
+                <div class="stats-icon success">
+                    <i class="fas fa-briefcase"></i>
                 </div>
             </div>
+            @if(isset($day_stats['services_difference']))
+            <div class="stats-trend {{ $day_stats['services_difference'] >= 0 ? 'trend-up' : 'trend-down' }}">
+                <i class="fas {{ $day_stats['services_difference'] >= 0 ? 'fa-arrow-up' : 'fa-arrow-down' }}"></i>
+                <span style="margin-left: 0.25rem;">{{ number_format(abs($day_stats['services_difference']), 1) }}% vs yesterday</span>
+            </div>
+            @endif
         </div>
 
         <!-- Orders Today -->
-        <div class="col-xl-3 col-md-6 mb-4">
-            <div class="card border-left-info shadow h-100 py-2">
-                <div class="card-body">
-                    <div class="row no-gutters align-items-center">
-                        <div class="col mr-2">
-                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
-                                Completed Orders Today
-                            </div>
-                            <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                {{ $day_stats['completed_orders'] ?? 0 }}
-                            </div>
-                            <div class="text-xs text-muted">
-                                <i class="bx bx-package"></i>
-                                {{ $day_stats['orders'] ?? 0 }} total orders today
-                            </div>
-                        </div>
-                        <div class="col-auto">
-                            <i class="bx bx-check-circle bx-lg text-info"></i>
-                        </div>
-                    </div>
+        <div class="stats-card">
+            <div class="stats-header">
+                <div>
+                    <div class="stats-value">{{ $day_stats['completed_orders'] ?? 0 }}</div>
+                    <div class="stats-label">Completed Orders Today</div>
                 </div>
-                <div class="card-footer bg-light">
-                    <a href="{{ route('admin_get_orders') }}" class="btn btn-info btn-sm">View All Orders</a>
+                <div class="stats-icon info">
+                    <i class="fas fa-check-circle"></i>
                 </div>
+            </div>
+            <div class="stats-trend trend-neutral">
+                <i class="fas fa-shopping-cart"></i>
+                <span style="margin-left: 0.25rem;">{{ $day_stats['orders'] ?? 0 }} total orders today</span>
             </div>
         </div>
 
-        <!-- Platform Revenue Today -->
-        <div class="col-xl-3 col-md-6 mb-4">
-            <div class="card border-left-warning shadow h-100 py-2">
-                <div class="card-body">
-                    <div class="row no-gutters align-items-center">
-                        <div class="col mr-2">
-                            <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
-                                Platform Earnings Today
-                            </div>
-                            <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                ${{ number_format($day_stats['revenue'] ?? 0, 2) }}
-                            </div>
-                            @if(isset($day_stats['total_order_value']) && $day_stats['total_order_value'] > 0)
-                            <div class="text-xs text-muted">
-                                <i class="bx bx-info-circle"></i>
-                                From ${{ number_format($day_stats['total_order_value'], 2) }} in orders
-                            </div>
-                            @endif
-                        </div>
-                        <div class="col-auto">
-                            <i class="bx bx-dollar-circle bx-lg text-warning"></i>
-                        </div>
-                    </div>
+        <!-- Revenue Today -->
+        <div class="stats-card">
+            <div class="stats-header">
+                <div>
+                    <div class="stats-value">${{ number_format($day_stats['revenue'] ?? 0, 2) }}</div>
+                    <div class="stats-label">Platform Earnings Today</div>
                 </div>
-                <div class="card-footer bg-light">
-                    <a href="{{ route('admin_get_app_settings') }}" class="btn btn-warning btn-sm">Fee Settings</a>
+                <div class="stats-icon warning">
+                    <i class="fas fa-dollar-sign"></i>
                 </div>
             </div>
-        </div>
-    </div>
-
-    <!-- Recent Orders Section -->
-    <div class="row mb-4">
-        <div class="col-md-8">
-            <div class="card shadow">
-                <div class="card-header py-3 d-flex justify-content-between align-items-center">
-                    <h6 class="m-0 font-weight-bold text-primary">Recent Orders</h6>
-                    <a href="{{ route('admin_get_orders') }}" class="btn btn-primary btn-sm">View All Orders</a>
-                </div>
-                <div class="card-body">
-                    @if($recentOrders->count() > 0)
-                    <div class="table-responsive">
-                        <table class="table table-borderless">
-                            <thead>
-                                <tr>
-                                    <th>Order ID</th>
-                                    <th>Customer</th>
-                                    <th>Amount</th>
-                                    <th>Status</th>
-                                    <th>Date</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach($recentOrders as $order)
-                                <tr>
-                                    <td>
-                                        <span class="badge bg-light text-dark">#{{ $order->id }}</span>
-                                    </td>
-                                    <td>
-                                        <div class="d-flex align-items-center">
-                                            <i class="bx bx-user-circle bx-sm me-2 text-muted"></i>
-                                            <div>
-                                                <div class="fw-semibold">{{ $order->full_name ?? 'Unknown User' }}</div>
-                                                <small class="text-muted">{{ $order->email ?? 'No email' }}</small>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <span class="fw-semibold text-success">${{ number_format($order->price, 2) }}</span>
-                                    </td>
-                                    <td>
-                                        @php
-                                        $statusColors = [
-                                        0 => ['badge' => 'bg-secondary', 'text' => 'Pending'],
-                                        1 => ['badge' => 'bg-warning', 'text' => 'In Progress'],
-                                        2 => ['badge' => 'bg-success', 'text' => 'Completed'],
-                                        3 => ['badge' => 'bg-danger', 'text' => 'Cancelled']
-                                        ];
-                                        $status = $statusColors[$order->status] ?? ['badge' => 'bg-secondary', 'text' => 'Unknown'];
-                                        @endphp
-                                        <span class="badge {{ $status['badge'] }}">{{ $status['text'] }}</span>
-                                    </td>
-                                    <td>
-                                        <small class="text-muted">{{ \Carbon\Carbon::parse($order->created_at)->format('M d, Y H:i') }}</small>
-                                    </td>
-                                </tr>
-                                @endforeach
-                            </tbody>
-                        </table>
-                    </div>
-                    @else
-                    <div class="text-center py-4">
-                        <i class="bx bx-package bx-lg text-muted mb-3"></i>
-                        <p class="text-muted mb-1">No orders yet</p>
-                        <small class="text-muted">Orders will appear here when customers start booking services</small>
-                    </div>
-                    @endif
-                </div>
+            @if(isset($day_stats['revenue_difference']))
+            <div class="stats-trend {{ $day_stats['revenue_difference'] >= 0 ? 'trend-up' : 'trend-down' }}">
+                <i class="fas {{ $day_stats['revenue_difference'] >= 0 ? 'fa-arrow-up' : 'fa-arrow-down' }}"></i>
+                <span style="margin-left: 0.25rem;">{{ number_format(abs($day_stats['revenue_difference']), 1) }}% vs yesterday</span>
             </div>
-        </div>
-
-        <!-- System Status -->
-        <div class="col-md-4">
-            <div class="card shadow">
-                <div class="card-header py-3">
-                    <h6 class="m-0 font-weight-bold text-primary">Platform Overview</h6>
-                </div>
-                <div class="card-body">
-                    <div class="mb-3">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <span class="text-muted">Total Customers</span>
-                            <span class="fw-semibold text-primary">{{ number_format($totalCustomers) }}</span>
-                        </div>
-                        <div class="progress" style="height: 6px;">
-                            <div class="progress-bar bg-primary" style="width: {{ $totalCustomers > 0 ? 100 : 0 }}%;"></div>
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <span class="text-muted">Service Providers</span>
-                            <span class="fw-semibold text-success">{{ number_format($totalProviders) }}</span>
-                        </div>
-                        <div class="progress" style="height: 6px;">
-                            <div class="progress-bar bg-success" style="width: {{ $totalProviders > 0 ? 100 : 0 }}%;"></div>
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <span class="text-muted">Active Services</span>
-                            <span class="fw-semibold text-info">{{ number_format($activeServices) }}/{{ number_format($totalServices) }}</span>
-                        </div>
-                        <div class="progress" style="height: 6px;">
-                            <div class="progress-bar bg-info" style="width: {{ $totalServices > 0 ? ($activeServices / $totalServices) * 100 : 0 }}%;"></div>
-                        </div>
-                    </div>
-
-                    @if($pendingWithdrawals > 0)
-                    <div class="alert alert-warning py-2 mb-3">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <i class="bx bx-info-circle me-1"></i>
-                                <strong>{{ $pendingWithdrawals }}</strong> pending withdrawals
-                            </div>
-                            <a href="{{ route('admin_withdraw_requests') }}" class="btn btn-warning btn-sm">Review</a>
-                        </div>
-                    </div>
-                    @endif
-
-                    <div class="mt-3 pt-3 border-top">
-                        <small class="text-muted">
-                            <i class="bx bx-time me-1"></i>
-                            Last updated: {{ now()->format('M d, Y H:i') }}
-                        </small>
-                    </div>
-                </div>
-            </div>
+            @endif
         </div>
     </div>
 
     <!-- Quick Actions -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card shadow">
-                <div class="card-header py-3">
-                    <h6 class="m-0 font-weight-bold text-primary">Quick Management Actions</h6>
+    <div class="chart-card">
+        <div class="chart-header">
+            <div>
+                <h3 class="chart-title">Quick Actions</h3>
+                <p class="chart-subtitle">Manage your platform efficiently</p>
+            </div>
+        </div>
+        <div class="quick-actions">
+            <a href="{{ route('admin_get_users') }}" class="action-btn">
+                <div class="action-icon">
+                    <i class="fas fa-users"></i>
                 </div>
-                <div class="card-body">
-                    <div class="row g-3">
-                        <div class="col-lg-2 col-md-4 col-6">
-                            <a href="{{ route('admin_get_users') }}" class="btn btn-outline-primary w-100 py-3">
-                                <i class="bx bx-user bx-lg mb-2"></i>
-                                <br><small>Manage<br>Customers</small>
-                            </a>
+                <div class="action-title">Manage Customers</div>
+                <div class="action-subtitle">View and manage all customers</div>
+            </a>
+            <a href="{{ route('admin_get_service_providers') }}" class="action-btn">
+                <div class="action-icon">
+                    <i class="fas fa-user-tie"></i>
+                </div>
+                <div class="action-title">Service Providers</div>
+                <div class="action-subtitle">Manage service providers</div>
+            </a>
+            <a href="{{ route('admin_get_services') }}" class="action-btn">
+                <div class="action-icon">
+                    <i class="fas fa-cogs"></i>
+                </div>
+                <div class="action-title">All Services</div>
+                <div class="action-subtitle">View and manage services</div>
+            </a>
+            <a href="{{ route('admin_create_coupon') }}" class="action-btn">
+                <div class="action-icon">
+                    <i class="fas fa-gift"></i>
+                </div>
+                <div class="action-title">Create Coupons</div>
+                <div class="action-subtitle">Add promotional coupons</div>
+            </a>
+            <a href="{{ route('admin_withdraw_requests') }}" class="action-btn">
+                <div class="action-icon">
+                    <i class="fas fa-money-bill-wave"></i>
+                </div>
+                <div class="action-title">Withdrawals</div>
+                <div class="action-subtitle">Process withdrawal requests</div>
+            </a>
+            <a href="{{ route('admin_get_app_settings') }}" class="action-btn">
+                <div class="action-icon">
+                    <i class="fas fa-cog"></i>
+                </div>
+                <div class="action-title">Settings</div>
+                <div class="action-subtitle">Configure platform settings</div>
+            </a>
+        </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem;">
+        <!-- Recent Orders -->
+        <div class="chart-card">
+            <div class="chart-header">
+                <div>
+                    <h3 class="chart-title">Recent Orders</h3>
+                    <p class="chart-subtitle">Latest customer orders</p>
+                </div>
+                <a href="{{ route('admin_get_orders') }}" style="color: #667eea; text-decoration: none; font-weight: 600; font-size: 0.875rem;">
+                    View All →
+                </a>
+            </div>
+            <div style="max-height: 400px; overflow-y: auto;">
+                @if($recentOrders->count() > 0)
+                @foreach($recentOrders as $order)
+                <div class="activity-item">
+                    <div class="activity-icon success">
+                        <i class="fas fa-shopping-bag"></i>
+                    </div>
+                    <div class="activity-content">
+                        <div class="activity-title">Order #{{ $order->id }}</div>
+                        <div style="color: #718096; font-size: 0.875rem; margin-bottom: 0.25rem;">
+                            {{ $order->full_name ?? 'Customer' }}
                         </div>
-                        <div class="col-lg-2 col-md-4 col-6">
-                            <a href="{{ route('admin_get_service_providers') }}" class="btn btn-outline-success w-100 py-3">
-                                <i class="bx bx-briefcase bx-lg mb-2"></i>
-                                <br><small>Service<br>Providers</small>
-                            </a>
-                        </div>
-                        <div class="col-lg-2 col-md-4 col-6">
-                            <a href="{{ route('admin_create_category') }}" class="btn btn-outline-info w-100 py-3">
-                                <i class="bx bx-category bx-lg mb-2"></i>
-                                <br><small>Manage<br>Categories</small>
-                            </a>
-                        </div>
-                        <div class="col-lg-2 col-md-4 col-6">
-                            <a href="{{ route('admin_create_coupon') }}" class="btn btn-outline-warning w-100 py-3">
-                                <i class="bx bx-gift bx-lg mb-2"></i>
-                                <br><small>Create<br>Coupons</small>
-                            </a>
-                        </div>
-                        <div class="col-lg-2 col-md-4 col-6">
-                            <a href="{{ route('admin_withdraw_requests') }}" class="btn btn-outline-danger w-100 py-3">
-                                <i class="bx bx-money-withdraw bx-lg mb-2"></i>
-                                <br><small>Withdraw<br>Requests</small>
-                            </a>
-                        </div>
-                        <div class="col-lg-2 col-md-4 col-6">
-                            <a href="{{ route('admin_get_app_settings') }}" class="btn btn-outline-secondary w-100 py-3">
-                                <i class="bx bx-cog bx-lg mb-2"></i>
-                                <br><small>Platform<br>Settings</small>
-                            </a>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span class="status-badge status-{{ $order->status == 2 ? 'success' : ($order->status == 1 ? 'warning' : 'danger') }}">
+                                @if($order->status == 2) Completed @elseif($order->status == 1) Pending @else Cancelled @endif
+                            </span>
+                            <span style="font-weight: 600; color: #2d3748;">${{ number_format($order->price, 2) }}</span>
                         </div>
                     </div>
                 </div>
+                @endforeach
+                @else
+                <div style="text-align: center; padding: 2rem; color: #718096;">
+                    <i class="fas fa-shopping-cart" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.3;"></i>
+                    <p>No orders yet</p>
+                </div>
+                @endif
+            </div>
+        </div>
+
+        <!-- Platform Overview -->
+        <div class="chart-card">
+            <div class="chart-header">
+                <div>
+                    <h3 class="chart-title">Platform Overview</h3>
+                    <p class="chart-subtitle">Key platform metrics</p>
+                </div>
+            </div>
+            <div style="space-y: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #f7fafc;">
+                    <div>
+                        <div style="font-weight: 600; color: #2d3748;">Total Customers</div>
+                        <div style="color: #718096; font-size: 0.875rem;">All registered customers</div>
+                    </div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #667eea;">
+                        {{ number_format($totalCustomers) }}
+                    </div>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #f7fafc;">
+                    <div>
+                        <div style="font-weight: 600; color: #2d3748;">Service Providers</div>
+                        <div style="color: #718096; font-size: 0.875rem;">Active service providers</div>
+                    </div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #22c55e;">
+                        {{ number_format($totalProviders) }}
+                    </div>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #f7fafc;">
+                    <div>
+                        <div style="font-weight: 600; color: #2d3748;">Active Services</div>
+                        <div style="color: #718096; font-size: 0.875rem;">{{ number_format($totalServices) }} total services</div>
+                    </div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #f59e0b;">
+                        {{ number_format($activeServices) }}
+                    </div>
+                </div>
+                @if($pendingWithdrawals > 0)
+                <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 1rem; margin-top: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <div style="font-weight: 600; color: #92400e;">Pending Withdrawals</div>
+                            <div style="color: #92400e; font-size: 0.875rem;">{{ $pendingWithdrawals }} requests waiting</div>
+                        </div>
+                        <a href="{{ route('admin_withdraw_requests') }}" style="background: #f59e0b; color: white; padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none; font-size: 0.875rem;">
+                            Review
+                        </a>
+                    </div>
+                </div>
+                @endif
+            </div>
+        </div>
+    </div>
+
+    <!-- Monthly Performance -->
+    <div class="chart-card">
+        <div class="chart-header">
+            <div>
+                <h3 class="chart-title">Monthly Performance</h3>
+                <p class="chart-subtitle">Current month statistics</p>
+            </div>
+        </div>
+        <div class="dashboard-grid">
+            <div style="text-align: center; padding: 1rem;">
+                <div style="font-size: 2rem; font-weight: 700; color: #667eea; margin-bottom: 0.5rem;">
+                    {{ $month_stats['users'] ?? 0 }}
+                </div>
+                <div style="color: #718096;">New Customers</div>
+            </div>
+            <div style="text-align: center; padding: 1rem;">
+                <div style="font-size: 2rem; font-weight: 700; color: #22c55e; margin-bottom: 0.5rem;">
+                    {{ $month_stats['services'] ?? 0 }}
+                </div>
+                <div style="color: #718096;">New Services</div>
+            </div>
+            <div style="text-align: center; padding: 1rem;">
+                <div style="font-size: 2rem; font-weight: 700; color: #f59e0b; margin-bottom: 0.5rem;">
+                    {{ $month_stats['orders'] ?? 0 }}
+                </div>
+                <div style="color: #718096;">Total Orders</div>
+            </div>
+            <div style="text-align: center; padding: 1rem;">
+                <div style="font-size: 2rem; font-weight: 700; color: #ef4444; margin-bottom: 0.5rem;">
+                    ${{ number_format($month_stats['revenue'] ?? 0, 0) }}
+                </div>
+                <div style="color: #718096;">Revenue</div>
             </div>
         </div>
     </div>
 </div>
 
-<style>
-    .border-left-primary {
-        border-left: 4px solid #4e73df !important;
-    }
-
-    .border-left-success {
-        border-left: 4px solid #1cc88a !important;
-    }
-
-    .border-left-info {
-        border-left: 4px solid #36b9cc !important;
-    }
-
-    .border-left-warning {
-        border-left: 4px solid #f6c23e !important;
-    }
-
-    .shadow {
-        box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15) !important;
-    }
-
-    .card-footer {
-        border-top: 1px solid #e3e6f0;
-    }
-
-    .text-xs {
-        font-size: 0.7rem;
-    }
-</style>
 @endsection
+
+@push('scripts')
+<script>
+    // Add any dashboard-specific JavaScript here
+    document.addEventListener('DOMContentLoaded', function() {
+        // Animate counters on page load
+        const animateCounter = (element, target, duration = 2000, isDecimal = false) => {
+            let current = 0;
+            const increment = target / (duration / 16);
+            const timer = setInterval(() => {
+                current += increment;
+                if (current >= target) {
+                    current = target;
+                    clearInterval(timer);
+                }
+
+                if (isDecimal) {
+                    // For monetary values, format with 2 decimal places
+                    element.textContent = '$' + current.toFixed(2);
+                } else {
+                    // For whole numbers, use integer formatting
+                    element.textContent = Math.floor(current).toLocaleString();
+                }
+            }, 16);
+        };
+
+        // Animate all stat values
+        document.querySelectorAll('.stats-value').forEach(element => {
+            const originalText = element.textContent;
+
+            // Check if this is a monetary value (contains $)
+            if (originalText.includes('$')) {
+                // Extract the numeric value properly for monetary amounts
+                const target = parseFloat(originalText.replace(/[$,]/g, ''));
+                if (target > 0) {
+                    element.textContent = '$0.00';
+                    setTimeout(() => animateCounter(element, target, 2000, true), 500);
+                }
+            } else {
+                // Handle regular numbers (users, services, orders)
+                const target = parseInt(originalText.replace(/[^0-9]/g, ''));
+                if (target > 0) {
+                    element.textContent = '0';
+                    setTimeout(() => animateCounter(element, target, 2000, false), 500);
+                }
+            }
+        });
+    });
+</script>
+@endpush

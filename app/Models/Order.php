@@ -8,10 +8,10 @@ use Illuminate\Database\Eloquent\Model;
 class Order extends Model
 {
     use HasFactory;
-    
+
     protected $table = "order";
     protected $guarded = ['id'];
-    
+
     // Explicitly define fillable fields for clarity
     protected $fillable = [
         'total_hours',
@@ -32,20 +32,29 @@ class Order extends Model
         'taxed_amount'
     ];
 
-    public function Service(){
+    public function Service()
+    {
         return $this->belongsTo('App\Models\Service', 'service_id');
     }
-    
-    public function User(){
+
+    public function User()
+    {
         return $this->belongsTo('App\Models\User', 'user_id');
     }
 
-   /**
-    * Get the earnings record for this order
-    */
-   public function earnings()
-   {
-       return $this->hasOne(ServiceEarning::class);
-   }
+    /**
+     * Get the earnings record for this order
+     */
+    public function earnings()
+    {
+        return $this->hasOne(ServiceEarning::class);
+    }
 
+    /**
+     * Get the orders for the user.
+     */
+    public function orders()
+    {
+        return $this->hasMany(Order::class);
+    }
 }

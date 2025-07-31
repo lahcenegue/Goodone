@@ -13,7 +13,7 @@ class User extends Authenticatable implements JWTSubject
 {
     use HasApiTokens, HasFactory, Notifiable;
 
-     /**
+    /**
      * Get the identifier that will be stored in the subject claim of the JWT.
      *
      * @return mixed
@@ -33,12 +33,14 @@ class User extends Authenticatable implements JWTSubject
         return [];
     }
 
-    public function Subcategory(){
+    public function Subcategory()
+    {
         return $this->belongsTo('App\Models\Subcategory', 'subcategory_id');
     }
 
-    
-    public function Rating(){
+
+    public function Rating()
+    {
         return $this->hasMany('App\Models\Rating', 'id');
     }
 
@@ -69,4 +71,12 @@ class User extends Authenticatable implements JWTSubject
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
     ];
+
+    /**
+     * Get the orders for the user.
+     */
+    public function orders()
+    {
+        return $this->hasMany(Order::class);
+    }
 }

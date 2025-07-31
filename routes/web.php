@@ -22,11 +22,11 @@ Route::post('/admin/login', [AdminController::class, 'login'])->name('admin.logi
 */
 
 Route::middleware(['admin.auth'])->group(function () {
-    
+
     // Dashboard and Authentication
     Route::get('/admin', [AdminController::class, "admin_home"])->name("admin_home");
     Route::post('/admin/logout', [AdminController::class, 'logout'])->name('admin.logout');
-    
+
     // Services Management
     Route::get('/admin/services', [AdminController::class, "get_services"])->name("admin_get_services");
     Route::post('/admin/services/{service}', [AdminController::class, "get_service"])->name("admin_get_service");
@@ -88,6 +88,5 @@ Route::middleware(['admin.auth'])->group(function () {
     // Orders and Transactions
     Route::get('/admin/orders', [AdminController::class, "get_orders"])->name("admin_get_orders");
     Route::get('/admin/transactions/{user}', [AdminController::class, "get_transactions"])->name("admin_get_transactions");
-    Route::get('/admin/platform-statistics', [AdminController::class, 'platform_statistics'])->name('admin_platform_statistics');
-
+    Route::get('/admin/platform-statistics', [AdminController::class, 'platform_statistics'])->name('admin.platform_statistics');
 });

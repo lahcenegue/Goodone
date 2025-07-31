@@ -12,10 +12,13 @@ use App\Models\User;
 use App\Models\Order;
 use App\Models\Service;
 use App\Models\Rating;
+use App\Models\ServiceEarning;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Hash;
 use App\Models\Admin;
 
@@ -25,21 +28,6 @@ class AdminController extends Controller
 
     public function admin_home(Request $request)
     {
-        $stats_today = [
-            "users" => 0,
-            "services" => 0,
-            "orders" => 0,
-            "revenue" => 0,
-            "earnings" => 0
-        ];
-        $stats_month = [
-            "users" => 0,
-            "services" => 0,
-            "orders" => 0,
-            "revenue" => 0,
-            "earnings" => 0
-        ];
-
         // Date ranges setup
         $start_year = new \DateTime('now');
         $start_year->modify('first day of this year');
@@ -188,93 +176,75 @@ class AdminController extends Controller
 
     public function aquire_stats($from, $to)
     {
+        // Convert DateTime objects to Y-m-d format for SQLite compatibility
+        $from_date = $from->format('Y-m-d');
+        $to_date = $to->format('Y-m-d');
+
         // Count users created in date range
-        $users = User::whereBetween("created_at", [$from, $to])->count();
+        $users = User::whereDate('created_at', '>=', $from_date)
+            ->whereDate('created_at', '<=', $to_date)
+            ->count();
 
         // Count services created in date range  
-        $services = Service::whereBetween("created_at", [$from, $to])->count();
+        $services = Service::whereDate('created_at', '>=', $from_date)
+            ->whereDate('created_at', '<=', $to_date)
+            ->count();
 
         // Get ALL orders in date range (for order count)
         $all_orders = DB::table('order')
-            ->whereBetween('created_at', [$from, $to]);
+            ->whereDate('created_at', '>=', $from_date)
+            ->whereDate('created_at', '<=', $to_date);
 
         $orders = $all_orders->count();
 
-        // Calculate TRUE PLATFORM EARNINGS (from both customer and provider)
-        $total_customer_payments = 0;    // What customers paid in total
-        $total_provider_earnings = 0;    // What providers received
-        $true_platform_revenue = 0;      // Platform's actual earnings (customer fees + provider commission)
+        // FIXED: Calculate TRUE PLATFORM EARNINGS from stored records (SQLite compatible)
+        $platform_earnings_query = ServiceEarning::where('status', 'completed')
+            ->whereDate('earned_at', '>=', $from_date)
+            ->whereDate('earned_at', '<=', $to_date);
 
+        // Get total platform earnings (sum of all customer + provider fees)
+        $true_platform_revenue = $platform_earnings_query->sum('platform_earnings_total');
+
+        // Get breakdown for transparency
+        $total_customer_fees = $platform_earnings_query->sum('customer_platform_fee');
+        $total_provider_fees = $platform_earnings_query->sum('provider_platform_fee');
+        $total_provider_earnings = $platform_earnings_query->sum('net_earnings');
+        $total_gross_amount = $platform_earnings_query->sum('gross_amount');
+
+        // Calculate total transaction volume (what customers actually paid)
+        // This includes: service cost + customer platform fees + taxes
         $completed_orders = DB::table('order')
             ->where('status', '=', 2)
-            ->whereBetween('created_at', [$from, $to])
+            ->whereDate('created_at', '>=', $from_date)
+            ->whereDate('created_at', '<=', $to_date)
             ->get();
 
+        $total_customer_payments = 0;
         foreach ($completed_orders as $order) {
-            // Method 1: Use saved platform_fee_amount if it exists (preferred - locked-in rate)
-            if (isset($order->platform_fee_amount) && $order->platform_fee_amount > 0) {
-                $platform_earnings = floatval($order->platform_fee_amount);
-
-                // Subtract any discounts applied
-                if (isset($order->discounted_amount)) {
-                    $platform_earnings -= floatval($order->discounted_amount);
-                }
-
-                $true_platform_revenue += $platform_earnings;
-                $total_customer_payments += floatval($order->price);
-            }
-            // Method 2: Calculate from order structure (if platform_fee_amount not saved)
-            else {
-                $order_price = floatval($order->price);
-                $total_customer_payments += $order_price;
-
-                // Try to get current platform settings (fallback only)
-                $customer_fee_percentage = 0;
-                $provider_commission_percentage = 0;
-
-                try {
-                    // Get platform fee settings
-                    $customer_fee_setting = AppSetting::where('key', 'customer_platform_fee_percentage')->first();
-                    $provider_commission_setting = AppSetting::where('key', 'provider_commission_percentage')->first();
-
-                    if ($customer_fee_setting) {
-                        $customer_fee_percentage = floatval($customer_fee_setting->value);
-                    }
-                    if ($provider_commission_setting) {
-                        $provider_commission_percentage = floatval($provider_commission_setting->value);
-                    }
-                } catch (Exception $e) {
-                    // Default fallback values
-                    $customer_fee_percentage = 15; // 15% customer fee
-                    $provider_commission_percentage = 10; // 10% provider commission
-                }
-
-                // Calculate platform earnings from both sides
-                $customer_fee = ($order_price * $customer_fee_percentage) / 100;
-                $provider_commission = ($order_price * $provider_commission_percentage) / 100;
-
-                $platform_earnings = $customer_fee + $provider_commission;
-
-                // Subtract any discounts
-                if (isset($order->discounted_amount)) {
-                    $platform_earnings -= floatval($order->discounted_amount);
-                }
-
-                $true_platform_revenue += $platform_earnings;
-            }
+            $total_customer_payments += floatval($order->price); // This includes service cost + platform fees + taxes
         }
 
-        // Calculate what providers actually received
-        $total_provider_earnings = $total_customer_payments - $true_platform_revenue;
+        Log::info('Platform earnings stats calculated', [
+            'period' => [$from_date, $to_date],
+            'platform_earnings_total' => $true_platform_revenue,
+            'customer_fees' => $total_customer_fees,
+            'provider_fees' => $total_provider_fees,
+            'provider_earnings' => $total_provider_earnings,
+            'customer_payments' => $total_customer_payments,
+            'query_dates' => ['from' => $from_date, 'to' => $to_date]
+        ]);
 
         return [
             "users" => $users,
             "services" => $services,
-            "orders" => $orders,  // ALL orders
-            "revenue" => $true_platform_revenue,  // TRUE platform earnings (customer fees + provider commissions)
-            "earnings" => $true_platform_revenue,  // Same as revenue
-            "total_customer_payments" => $total_customer_payments,  // Total paid by customers
-            "total_provider_earnings" => $total_provider_earnings,  // Total received by providers
+            "orders" => $orders,
+            "revenue" => $true_platform_revenue,  // FIXED: True platform earnings
+            "earnings" => $true_platform_revenue, // Same as revenue
+            "total_customer_payments" => $total_customer_payments,
+            "total_provider_earnings" => $total_provider_earnings,
+            "customer_platform_fees" => $total_customer_fees,      // NEW: Customer fees breakdown
+            "provider_platform_fees" => $total_provider_fees,      // NEW: Provider fees breakdown
+            "gross_service_amount" => $total_gross_amount,          // NEW: Total service amounts
         ];
     }
 
@@ -886,54 +856,517 @@ class AdminController extends Controller
     }
 
 
-    public function platform_statistics()
+    /**
+     * Enhanced platform statistics with comprehensive KPIs, charts, and insights
+     */
+    public function platform_statistics(Request $request)
     {
-        // Get all-time statistics
-        $start_all_time = new \DateTime('2020-01-01'); // Adjust to your platform launch date
-        $end_all_time = new \DateTime('now');
+        try {
+            // Get date range from request (default 30 days)
+            $dateRange = (int) $request->get('date_range', 30);
+            $endDate = now();
+            $startDate = now()->subDays($dateRange);
 
-        $all_time_stats = $this->aquire_stats($start_all_time, $end_all_time);
+            // Calculate previous period for comparison
+            $previousStartDate = $startDate->copy()->subDays($dateRange);
+            $previousEndDate = $startDate->copy();
 
-        // Get comprehensive platform data
-        $totalUsers = User::where('type', 'customer')->count();
+            // Calculate KPIs
+            $kpis = $this->calculateKPIs($startDate, $endDate, $previousStartDate, $previousEndDate);
+
+            // Calculate chart data
+            $charts = $this->calculateChartsData($startDate, $endDate, $dateRange);
+
+            // Calculate insights
+            $insights = $this->calculateDetailedInsights($startDate, $endDate);
+
+            // Metadata
+            $meta = [
+                'date_range' => $dateRange,
+                'start_date' => $startDate->format('Y-m-d'),
+                'end_date' => $endDate->format('Y-m-d'),
+                'last_updated' => now()->format('M d, Y H:i'),
+                'status' => 'success'
+            ];
+
+            return view('admin.platform_statistics', compact('kpis', 'charts', 'insights', 'meta'));
+        } catch (\Exception $e) {
+            Log::error('Platform statistics error: ' . $e->getMessage());
+
+            return view('admin.platform_statistics', [
+                'kpis' => $this->getEmptyKPIs(),
+                'charts' => $this->getEmptyCharts(),
+                'insights' => $this->getEmptyInsights(),
+                'meta' => [
+                    'date_range' => $dateRange ?? 30,
+                    'start_date' => now()->subDays(30)->format('Y-m-d'),
+                    'end_date' => now()->format('Y-m-d'),
+                    'last_updated' => now()->format('M d, Y H:i'),
+                    'status' => 'error',
+                    'error_message' => 'Unable to load statistics data'
+                ]
+            ]);
+        }
+    }
+
+    /**
+     * Calculate chart data for visualizations
+     */
+    private function calculateChartsData($startDate, $endDate, $dateRange)
+    {
+        return [
+            'orders_trend' => $this->getOrdersTrendData($startDate, $endDate, $dateRange),
+            'revenue_trend' => $this->getRevenueTrendData($startDate, $endDate, $dateRange),
+            'users_trend' => $this->getUsersTrendData($startDate, $endDate, $dateRange),
+            'orders_by_category' => $this->getOrdersByCategoryData($startDate, $endDate),
+            'providers_by_region' => $this->getProvidersByRegionData()
+        ];
+    }
+
+    /**
+     * Get orders trend data for charts
+     */
+    private function getOrdersTrendData($startDate, $endDate, $dateRange)
+    {
+        // Simple daily grouping for all date ranges
+        $orders = Order::selectRaw('DATE(created_at) as date, COUNT(*) as count')
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
+        $labels = [];
+        $data = [];
+
+        foreach ($orders as $order) {
+            $labels[] = \Carbon\Carbon::parse($order->date)->format('M d');
+            $data[] = (int) $order->count;
+        }
+
+        // Ensure we have at least some data points
+        if (empty($labels)) {
+            $labels = ['No Data'];
+            $data = [0];
+        }
+
+        return ['labels' => $labels, 'data' => $data];
+    }
+
+    /**
+     * Get revenue trend data for charts
+     */
+    private function getRevenueTrendData($startDate, $endDate, $dateRange)
+    {
+        $revenue = Order::selectRaw('DATE(created_at) as date, SUM(price) as total')
+            ->where('status', 2) // completed orders only
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
+        $labels = [];
+        $data = [];
+
+        foreach ($revenue as $rev) {
+            $labels[] = \Carbon\Carbon::parse($rev->date)->format('M d');
+            $data[] = round((float) ($rev->total ?? 0), 2);
+        }
+
+        // Ensure we have at least some data points
+        if (empty($labels)) {
+            $labels = ['No Data'];
+            $data = [0];
+        }
+
+        return ['labels' => $labels, 'data' => $data];
+    }
+
+
+    /**
+     * Calculate high-level KPIs with growth percentages
+     */
+    private function calculateKPIs($startDate, $endDate, $previousStartDate, $previousEndDate)
+    {
+        // Current period data
+        $currentOrders = Order::whereBetween('created_at', [$startDate, $endDate])->count();
+        $currentUsers = User::whereBetween('created_at', [$startDate, $endDate])->count();
+        $currentServices = Service::whereBetween('created_at', [$startDate, $endDate])->count();
+
+        // Current period revenue (from completed orders)
+        $currentRevenue = Order::where('status', 2)
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->sum('price') ?? 0;
+
+        // Previous period data
+        $previousOrders = Order::whereBetween('created_at', [$previousStartDate, $previousEndDate])->count();
+        $previousUsers = User::whereBetween('created_at', [$previousStartDate, $previousEndDate])->count();
+        $previousServices = Service::whereBetween('created_at', [$previousStartDate, $previousEndDate])->count();
+        $previousRevenue = Order::where('status', 2)
+            ->whereBetween('created_at', [$previousStartDate, $previousEndDate])
+            ->sum('price') ?? 0;
+
+        // Calculate growth percentages
+        $ordersGrowth = $this->calculateGrowth($currentOrders, $previousOrders);
+        $usersGrowth = $this->calculateGrowth($currentUsers, $previousUsers);
+        $servicesGrowth = $this->calculateGrowth($currentServices, $previousServices);
+        $revenueGrowth = $this->calculateGrowth($currentRevenue, $previousRevenue);
+
+        // Total stats
+        $totalOrders = Order::count();
+        $totalUsers = User::count();
+        $totalCustomers = User::where('type', 'customer')->count();
         $totalProviders = User::where('type', 'worker')->count();
         $totalServices = Service::count();
         $activeServices = Service::where('active', true)->count();
-        $totalCompletedOrders = DB::table('order')->where('status', 2)->count();
-        $totalOrders = DB::table('order')->count();
-        $pendingWithdrawals = WithdrawRequest::where('status', '<', 2)->count();
+        $totalRevenue = Order::where('status', 2)->sum('price') ?? 0;
+        $pendingPayouts = WithdrawRequest::where('status', 0)->sum('amount') ?? 0;
+        $pendingPayoutCount = WithdrawRequest::where('status', 0)->count();
 
-        // Financial calculations
-        $totalPlatformRevenue = $all_time_stats['revenue'];
-        $totalCustomerPayments = $all_time_stats['total_customer_payments'];
-        $totalProviderEarnings = $all_time_stats['total_provider_earnings'];
+        return [
+            'total_orders' => [
+                'value' => $totalOrders,
+                'period_value' => $currentOrders,
+                'growth' => $ordersGrowth,
+                'icon' => 'bx-shopping-bag',
+                'color' => 'primary'
+            ],
+            'total_users' => [
+                'value' => $totalUsers,
+                'period_value' => $currentUsers,
+                'growth' => $usersGrowth,
+                'breakdown' => [
+                    'customers' => $totalCustomers,
+                    'providers' => $totalProviders
+                ],
+                'icon' => 'bx-user',
+                'color' => 'success'
+            ],
+            'total_services' => [
+                'value' => $totalServices,
+                'active' => $activeServices,
+                'pending' => $totalServices - $activeServices,
+                'period_value' => $currentServices,
+                'growth' => $servicesGrowth,
+                'utilization' => $totalServices > 0 ? round(($activeServices / $totalServices) * 100, 1) : 0,
+                'icon' => 'bx-grid-alt',
+                'color' => 'info'
+            ],
+            'total_revenue' => [
+                'value' => $totalRevenue,
+                'period_value' => $currentRevenue,
+                'growth' => $revenueGrowth,
+                'platform_revenue' => $totalRevenue * 0.1, // Assuming 10% platform fee
+                'icon' => 'bx-dollar-circle',
+                'color' => 'warning'
+            ],
+            'pending_payouts' => [
+                'value' => $pendingPayouts,
+                'count' => $pendingPayoutCount,
+                'icon' => 'bx-money-withdraw',
+                'color' => 'danger'
+            ]
+        ];
+    }
 
-        // Estimate customer fees vs provider commissions (you can make this more accurate)
-        $customerFees = $totalPlatformRevenue * 0.6; // Estimate 60% from customer fees
-        $providerCommissions = $totalPlatformRevenue * 0.4; // Estimate 40% from provider commissions
 
-        // Calculate key metrics
-        $averageOrderValue = $totalCompletedOrders > 0 ? $totalCustomerPayments / $totalCompletedOrders : 0;
-        $platformTakeRate = $totalCustomerPayments > 0 ? ($totalPlatformRevenue / $totalCustomerPayments) * 100 : 0;
-        $completionRate = $totalOrders > 0 ? ($totalCompletedOrders / $totalOrders) * 100 : 0;
-        $providerUtilization = $totalServices > 0 ? ($activeServices / $totalServices) * 100 : 0;
+    /**
+     * Get users registration trend data
+     */
+    private function getUsersTrendData($startDate, $endDate, $dateRange)
+    {
+        $users = User::selectRaw("DATE(created_at) as date, 
+                          SUM(CASE WHEN type = 'customer' THEN 1 ELSE 0 END) as customers,
+                          SUM(CASE WHEN type = 'worker' THEN 1 ELSE 0 END) as providers")
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
 
-        return view('admin.platform_statistics', compact(
-            'totalUsers',
-            'totalProviders',
-            'totalServices',
-            'activeServices',
-            'totalCompletedOrders',
-            'totalPlatformRevenue',
-            'totalCustomerPayments',
-            'totalProviderEarnings',
-            'customerFees',
-            'providerCommissions',
-            'averageOrderValue',
-            'platformTakeRate',
-            'completionRate',
-            'providerUtilization',
-            'pendingWithdrawals'
-        ));
+        $labels = [];
+        $customers = [];
+        $providers = [];
+
+        foreach ($users as $user) {
+            $labels[] = \Carbon\Carbon::parse($user->date)->format('M d');
+            $customers[] = (int) $user->customers;
+            $providers[] = (int) $user->providers;
+        }
+
+        // Ensure we have at least some data points
+        if (empty($labels)) {
+            $labels = ['No Data'];
+            $customers = [0];
+            $providers = [0];
+        }
+
+        return [
+            'labels' => $labels,
+            'datasets' => [
+                [
+                    'label' => 'Customers',
+                    'data' => $customers,
+                    'color' => '#4e73df'
+                ],
+                [
+                    'label' => 'Providers',
+                    'data' => $providers,
+                    'color' => '#1cc88a'
+                ]
+            ]
+        ];
+    }
+
+    /**
+     * Calculate detailed insights
+     */
+    private function calculateDetailedInsights($startDate, $endDate)
+    {
+        return [
+            'order_insights' => $this->getOrderInsights($startDate, $endDate),
+            'user_insights' => $this->getUserInsights($startDate, $endDate),
+            'service_insights' => $this->getServiceInsights($startDate, $endDate),
+            'financial_overview' => $this->getFinancialOverview($startDate, $endDate)
+        ];
+    }
+
+    /**
+     * Helper method to calculate growth percentage
+     */
+    private function calculateGrowth($current, $previous)
+    {
+        if ($previous == 0) {
+            return $current > 0 ? 100 : 0;
+        }
+        return round((($current - $previous) / $previous) * 100, 1);
+    }
+
+
+    /**
+     * Get empty data structures for error states
+     */
+    private function getEmptyKPIs()
+    {
+        return [
+            'total_orders' => ['value' => 0, 'period_value' => 0, 'growth' => 0, 'icon' => 'bx-shopping-bag', 'color' => 'primary'],
+            'total_users' => ['value' => 0, 'period_value' => 0, 'growth' => 0, 'breakdown' => ['customers' => 0, 'providers' => 0], 'icon' => 'bx-user', 'color' => 'success'],
+            'total_services' => ['value' => 0, 'active' => 0, 'pending' => 0, 'utilization' => 0, 'icon' => 'bx-grid-alt', 'color' => 'info'],
+            'total_revenue' => ['value' => 0, 'period_value' => 0, 'growth' => 0, 'platform_revenue' => 0, 'icon' => 'bx-dollar-circle', 'color' => 'warning'],
+            'pending_payouts' => ['value' => 0, 'count' => 0, 'icon' => 'bx-money-withdraw', 'color' => 'danger']
+        ];
+    }
+
+
+    private function getEmptyCharts()
+    {
+        return [
+            'orders_trend' => ['labels' => ['No Data'], 'data' => [0]],
+            'revenue_trend' => ['labels' => ['No Data'], 'data' => [0]],
+            'users_trend' => ['labels' => ['No Data'], 'datasets' => [['label' => 'Customers', 'data' => [0], 'color' => '#4e73df'], ['label' => 'Providers', 'data' => [0], 'color' => '#1cc88a']]],
+            'orders_by_category' => ['labels' => ['No Data'], 'data' => [['value' => 0, 'color' => '#e2e8f0']]],
+            'providers_by_region' => ['labels' => ['No Data'], 'data' => [['value' => 0, 'color' => '#e2e8f0']]]
+        ];
+    }
+
+    private function getEmptyInsights()
+    {
+        return [
+            'order_insights' => ['top_services' => collect([]), 'avg_order_value' => 0, 'avg_completion_time' => 'N/A'],
+            'user_insights' => ['daily_registrations' => collect([]), 'active_users' => 0, 'retention_rate' => 0],
+            'service_insights' => ['services_added' => 0, 'services_pending' => 0, 'top_rated_services' => collect([])],
+            'financial_overview' => ['period_revenue' => 0, 'platform_profit' => 0, 'estimated_monthly' => 0, 'profit_margin' => 0]
+        ];
+    }
+
+    /**
+     * Get orders by category data
+     */
+    private function getOrdersByCategoryData($startDate, $endDate)
+    {
+        $orders = Order::join('services', 'services.id', '=', 'order.service_id')
+            ->join('categories', 'categories.id', '=', 'services.category_id')
+            ->selectRaw('categories.name, COUNT(*) as count')
+            ->whereBetween('order.created_at', [$startDate, $endDate])
+            ->groupBy('categories.id', 'categories.name')
+            ->orderBy('count', 'DESC')
+            ->get();
+
+        $labels = [];
+        $data = [];
+        $colors = ['#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#5a5c69'];
+
+        if ($orders->isEmpty()) {
+            return ['labels' => ['No Data'], 'data' => [['value' => 0, 'color' => '#e2e8f0']]];
+        }
+
+        foreach ($orders as $index => $order) {
+            $labels[] = $order->name;
+            $data[] = [
+                'value' => (int) $order->count,
+                'color' => $colors[$index % count($colors)]
+            ];
+        }
+
+        return ['labels' => $labels, 'data' => $data];
+    }
+
+    /**
+     * Get providers by region data (Canadian provinces stored in city column)
+     */
+    private function getProvidersByRegionData()
+    {
+        // List of valid Canadian provinces/territories
+        $validProvinces = [
+            'Alberta',
+            'British Columbia',
+            'Manitoba',
+            'New Brunswick',
+            'Newfoundland and Labrador',
+            'Northwest Territories',
+            'Nova Scotia',
+            'Nunavut',
+            'Ontario',
+            'Prince Edward Island',
+            'Québec',
+            'Saskatchewan',
+            'Yukon'
+        ];
+
+        // Get providers by province (stored in city column)
+        $providers = User::selectRaw('COALESCE(NULLIF(city, ""), "Unknown") as province_name, COUNT(*) as count')
+            ->where('type', 'worker')
+            ->where('country', 'Canada')
+            ->whereNotNull('city')
+            ->where('city', '!=', '')
+            ->whereIn('city', $validProvinces) // Only include valid Canadian provinces
+            ->groupBy('province_name')
+            ->orderBy('count', 'DESC')
+            ->get();
+
+        // Add users with unknown/invalid province data
+        $unknownCount = User::where('type', 'worker')
+            ->where(function ($query) use ($validProvinces) {
+                $query->whereNull('city')
+                    ->orWhere('city', '')
+                    ->orWhereNull('country')
+                    ->orWhere('country', '!=', 'Canada')
+                    ->orWhereNotIn('city', $validProvinces);
+            })
+            ->count();
+
+        $labels = [];
+        $data = [];
+        $colors = ['#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#5a5c69', '#858796', '#6f42c1', '#fd7e14', '#20c997', '#e83e8c', '#6c757d', '#17a2b8'];
+
+        if ($providers->isEmpty() && $unknownCount == 0) {
+            return ['labels' => ['No Data'], 'data' => [['value' => 0, 'color' => '#e2e8f0']]];
+        }
+
+        $index = 0;
+
+        // Add valid provinces
+        foreach ($providers as $provider) {
+            $labels[] = $provider->province_name;
+            $data[] = [
+                'value' => (int) $provider->count,
+                'color' => $colors[$index % count($colors)]
+            ];
+            $index++;
+        }
+
+        // Add unknown data if exists
+        if ($unknownCount > 0) {
+            $labels[] = 'Unknown/Other';
+            $data[] = [
+                'value' => $unknownCount,
+                'color' => $colors[$index % count($colors)]
+            ];
+        }
+
+        return ['labels' => $labels, 'data' => $data];
+    }
+
+    /**
+     * Get order insights
+     */
+    private function getOrderInsights($startDate, $endDate)
+    {
+        $topServices = Order::join('services', 'services.id', '=', 'order.service_id')
+            ->selectRaw('services.service, services.id, COUNT(*) as order_count')
+            ->whereBetween('order.created_at', [$startDate, $endDate])
+            ->groupBy('services.id', 'services.service')
+            ->orderBy('order_count', 'DESC')
+            ->limit(5)
+            ->get();
+
+        $avgOrderValue = Order::whereBetween('created_at', [$startDate, $endDate])->avg('price') ?? 0;
+
+        return [
+            'top_services' => $topServices,
+            'avg_order_value' => round($avgOrderValue, 2),
+            'avg_completion_time' => '2.5 days' // You can calculate this based on your order status changes
+        ];
+    }
+
+    /**
+     * Get user insights
+     */
+    private function getUserInsights($startDate, $endDate)
+    {
+        $dailyRegistrations = User::selectRaw('DATE(created_at) as date, COUNT(*) as count')
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->groupBy('date')
+            ->orderBy('date', 'DESC')
+            ->limit(7)
+            ->get();
+
+        $activeUsers = User::whereHas('orders', function ($query) use ($startDate, $endDate) {
+            $query->whereBetween('created_at', [$startDate, $endDate]);
+        })->count();
+
+        return [
+            'daily_registrations' => $dailyRegistrations,
+            'active_users' => $activeUsers,
+            'retention_rate' => 75 // You can calculate this based on repeat orders
+        ];
+    }
+
+    /**
+     * Get service insights
+     */
+    private function getServiceInsights($startDate, $endDate)
+    {
+        $servicesAdded = Service::whereBetween('created_at', [$startDate, $endDate])->count();
+        $servicesPending = Service::where('active', false)->count();
+
+        return [
+            'services_added' => $servicesAdded,
+            'services_pending' => $servicesPending,
+            'top_rated_services' => collect([]) // You can implement this based on your rating system
+        ];
+    }
+
+    /**
+     * Get financial overview
+     */
+    private function getFinancialOverview($startDate, $endDate)
+    {
+        $periodRevenue = Order::where('status', 2)
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->sum('price') ?? 0;
+
+        // Assuming 10% platform fee
+        $platformProfit = $periodRevenue * 0.1;
+
+        $daysInPeriod = $endDate->diffInDays($startDate);
+        $dailyAverage = $daysInPeriod > 0 ? $platformProfit / $daysInPeriod : 0;
+        $estimatedMonthly = $dailyAverage * 30;
+
+        return [
+            'period_revenue' => $periodRevenue,
+            'platform_profit' => $platformProfit,
+            'revenue_by_category' => collect([]),
+            'estimated_monthly' => round($estimatedMonthly, 2),
+            'profit_margin' => $periodRevenue > 0 ? round(($platformProfit / $periodRevenue) * 100, 1) : 0
+        ];
     }
 }
