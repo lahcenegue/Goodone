@@ -5,119 +5,180 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\User;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Password;
-use Twilio\Rest\Client;
 use App\Mail\OtpMail;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
 
 class SmsPasswordResetController extends Controller
 {
-    // Send SMS with reset token
+    /**
+     * Send password reset code via email
+     * Uses reset_token fields (separate from email verification)
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
     public function sendResetCode(Request $request)
     {
         $request->validate([
-            // 'phone' => 'required|numeric',  // Ensure it's a valid phone number
-            'email' => 'required|string',  // Ensure it's a valid phone number
+            'email' => 'required|email|exists:users,email',
         ]);
 
-        // Get the user by phone number
-        // $user = User::where('phone', $request->phone)->first();
         $user = User::where('email', $request->email)->first();
 
         if (!$user) {
-            return response()->json(['message' => 'User not found'], 404);
+            return response()->json([
+                'message' => 'User not found',
+                'success' => false
+            ], 404);
         }
 
-        // Generate a random token for password reset
-        $token = rand(100000, 999999);
-        // $token = "000000";
+        // Check if user account is verified
+        if (!$user->verified) {
+            return response()->json([
+                'message' => 'Account is not verified. Please verify your account first.',
+                'success' => false
+            ], 400);
+        }
 
-        // Save the token and expiry time in the database or cache (token expiry after 5 minutes for example)
-        $user->update(['reset_token' => $token, 'reset_token_expiry' => now()->addMinutes(5)]);
+        // Check if user account is blocked
+        if ($user->blocked) {
+            return response()->json([
+                'message' => 'Account is blocked. Please contact support.',
+                'success' => false
+            ], 403);
+        }
 
-        // Send the token via SMS using Twilio
-        // response()->json(['message' => "Your password reset code is: $token"]);
-        // $this->sendSms($user->phone, "Your password reset code is: $token");
-        $this->sendEmail($user->email, "Your password reset code is: $token");
+        try {
+            // Generate a random 6-digit token for password reset
+            $token = (string) rand(100000, 999999);
 
-        return response()->json(['message' => 'Reset code sent via SMS']);
+            // Store in reset token fields (NOT verification token fields)
+            $user->update([
+                'reset_token' => $token, 
+                'reset_token_expiry' => now()->addMinutes(15)
+            ]);
+
+            // Send the reset code via email
+            $this->sendResetCodeEmail($user->email, $token);
+
+            Log::info('Password reset code sent successfully', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'expires_at' => now()->addMinutes(15)->toISOString()
+            ]);
+
+            return response()->json([
+                'message' => 'Password reset code sent to your email',
+                'success' => true
+            ], 200);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to send password reset code', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to send reset code. Please try again later.',
+                'success' => false
+            ], 500);
+        }
     }
 
-    // Verify the reset code and reset the password
+    /**
+     * Reset password using the reset token
+     * Uses reset_token fields (separate from email verification)
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
     public function resetPassword(Request $request)
     {
         $request->validate([
             'phone' => 'required_if:email,null|numeric',
-            'email' => 'required_if:phone,null',
-            'reset_token' => 'required|numeric',
-            'password' => 'required',
+            'email' => 'required_if:phone,null|email',
+            'reset_token' => 'required|string|size:6',
+            'password' => 'required|string|min:6',
         ]);
 
-        if($request->phone){
-            $user = User::where('phone', $request->phone)->first();
-        }else{
-            $user = User::where('email', $request->email)->first();
-        }
+        try {
+            // Find user by phone or email
+            if ($request->phone) {
+                $user = User::where('phone', $request->phone)->first();
+            } else {
+                $user = User::where('email', $request->email)->first();
+            }
 
-        if (!$user) {
-            return response()->json(['message' => 'User not found'], 404);
-        }
+            if (!$user) {
+                return response()->json([
+                    'message' => 'User not found',
+                    'success' => false
+                ], 404);
+            }
 
-        // Check if token is valid and not expired
-        if ($user->reset_token !== $request->reset_token || $user->reset_token_expiry < now()) {
-            return response()->json(['message' => 'Invalid or expired reset token'], 400);
-        }
+            // Validate reset token using the User model helper method
+            if (!$user->isValidResetToken($request->reset_token)) {
+                Log::warning('Invalid password reset token attempt', [
+                    'user_id' => $user->id,
+                    'provided_token' => $request->reset_token,
+                    'token_expired' => $user->reset_token_expiry ? $user->reset_token_expiry->isPast() : true,
+                    'ip_address' => $request->ip()
+                ]);
 
+                return response()->json([
+                    'message' => 'Invalid or expired reset token',
+                    'success' => false
+                ], 400);
+            }
+
+            // Update password
+            $user->update([
+                'password' => bcrypt($request->password),
+            ]);
+
+            // Clear reset token using the User model helper method
+            $user->clearResetToken();
+
+            Log::info('Password reset completed successfully', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'ip_address' => $request->ip()
+            ]);
+
+            return response()->json([
+                'message' => 'Password reset successfully',
+                'success' => true
+            ], 200);
+
+        } catch (\Exception $e) {
+            Log::error('Password reset operation failed', [
+                'error' => $e->getMessage(),
+                'email' => $request->email ?? null,
+                'phone' => $request->phone ?? null,
+                'ip_address' => $request->ip()
+            ]);
+
+            return response()->json([
+                'message' => 'Password reset failed. Please try again later.',
+                'success' => false
+            ], 500);
+        }
+    }
+
+    /**
+     * Send password reset code via email
+     *
+     * @param string $email
+     * @param string $token
+     * @return void
+     * @throws \Exception
+     */
+    private function sendResetCodeEmail($email, $token)
+    {
+        $message = "Your password reset code is: {$token}. This code expires in 15 minutes. If you didn't request this, please ignore this email.";
         
-        $user->update([
-            'password' => bcrypt($request->password),
-            'reset_token' => null, // Clear the reset token
-            'reset_token_expiry' => null, // Clear the token expiry
-        ]);
-
-        return response()->json(['message' => 'Password reset successfully']);
-    }
-
-    // Helper function to send SMS using Twilio
-    protected function sendSms($to, $message)
-    {
-        // some sms sending method
-        // return response()->json[["to"=>$to, 'message'=>$message]];
-        // $sid = env('TWILIO_SID');
-        // $auth_token = env('TWILIO_AUTH_TOKEN');
-        // $from = env('TWILIO_PHONE_NUMBER');
-
-        // $client = new Client($sid, $auth_token);
-
-        // $client->messages->create(
-        //     $to, // To phone number
-        //     [
-        //         'from' => $from,  // From Twilio phone number
-        //         'body' => $message
-        //     ]
-        // );
-    }
-
-    // Helper function to send SMS using Twilio
-    protected function sendEmail($to, $message)
-    {
-
-        Mail::to($to)->send(new OtpMail($message));
-        // some sms sending method
-        // return response()->json[["to"=>$to, 'message'=>$message]];
-        // $sid = env('TWILIO_SID');
-        // $auth_token = env('TWILIO_AUTH_TOKEN');
-        // $from = env('TWILIO_PHONE_NUMBER');
-
-        // $client = new Client($sid, $auth_token);
-
-        // $client->messages->create(
-        //     $to, // To phone number
-        //     [
-        //         'from' => $from,  // From Twilio phone number
-        //         'body' => $message
-        //     ]
-        // );
+        Mail::to($email)->send(new OtpMail($message));
     }
 }

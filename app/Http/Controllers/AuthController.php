@@ -45,14 +45,14 @@ class AuthController extends Controller
             'full_name' => 'string',
             "picture" => "file",
         ]);
-        
-        if(isset($validation["password"])) {
+
+        if (isset($validation["password"])) {
             $validation["password"] = bcrypt($validation["password"]);
         }
-        
+
         $validation["id"] = auth("api")->user()->id;
-        
-        if($request->file('picture')){
+
+        if ($request->file('picture')) {
             $file = $request->file('picture');
             $temp = $file->store('public/images');
             $_array = explode("/", $temp);
@@ -87,12 +87,12 @@ class AuthController extends Controller
             "device_token" => "nullable|string",
             "picture" => "file|sometimes",
         ]);
-        
-        if(isset($validation["password"])) {
+
+        if (isset($validation["password"])) {
             $validation["password"] = bcrypt($validation["password"]);
         }
-        
-        if($request->file('picture')){
+
+        if ($request->file('picture')) {
             $file = $request->file('picture');
             $temp = $file->store('public/images');
             $_array = explode("/", $temp);
@@ -103,15 +103,15 @@ class AuthController extends Controller
             $provider = AppSetting::where("key", "=", "provider-image");
             $customer_image = "";
             $provider_image = "";
-            
-            if($customer->count() > 0) {
+
+            if ($customer->count() > 0) {
                 $customer_image = $customer->first()->value;
             }
-            if($provider->count() > 0) {
+            if ($provider->count() > 0) {
                 $provider_image = $provider->first()->value;
             }
-            
-            if($validation["type"] == "worker") {
+
+            if ($validation["type"] == "worker") {
                 $validation["picture"] = $provider_image;
             } else {
                 $validation["picture"] = $customer_image;
@@ -120,18 +120,24 @@ class AuthController extends Controller
 
         if ($validation) {
             $user = User::create($validation);
-            $token = $this->createOtpCode($user->email);
-            $this->sendOtpCode($user->email, $token);
-            return response()->json(['message' => 'Successfully created account, Otp code is sent to email']);
+            $token = $this->createVerificationToken($user->email);
+            $this->sendVerificationOtp($user->email, $token);
+            return response()->json([
+                'message' => 'Successfully created account. Verification OTP sent to email.',
+                'user_id' => $user->id
+            ]);
         } else {
             return response()->json(['error' => 'Bad Request'], 400);
         }
     }
 
+    /**
+     * Send verification code for email verification (NOT password reset)
+     */
     public function sendVerificationCode(Request $request)
     {
         $request->validate([
-            'email' => 'required|string',
+            'email' => 'required|email|exists:users,email',
         ]);
 
         $user = User::where('email', $request->email)->first();
@@ -139,44 +145,101 @@ class AuthController extends Controller
         if (!$user) {
             return response()->json(['message' => 'User not found'], 404);
         }
-        
-        $token = $this->createOtpCode($request->email);
-        $sent_otp = $this->sendOtpCode($user->email, $token);
 
-        return response()->json(['message' => 'Otp code sent via email']);
+        // Check if user is already verified
+        if ($user->verified) {
+            return response()->json(['message' => 'Account is already verified'], 400);
+        }
+
+        try {
+            $token = $this->createVerificationToken($request->email);
+            $this->sendVerificationOtp($user->email, $token);
+
+            Log::info('Verification OTP sent', [
+                'user_id' => $user->id,
+                'email' => $user->email
+            ]);
+
+            return response()->json([
+                'message' => 'Verification OTP sent to email',
+                'success' => true
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to send verification OTP', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to send verification code. Please try again.',
+                'success' => false
+            ], 500);
+        }
     }
 
-    // Verify the reset code and reset the password
+    /**
+     * Verify account using verification token (NOT password reset token)
+     */
     public function verifyAccount(Request $request)
     {
         $request->validate([
             'phone' => 'required_if:email,null|numeric',
-            'email' => 'required_if:phone,null',
-            'otp' => 'required|numeric',
+            'email' => 'required_if:phone,null|email',
+            'otp' => 'required|string',
         ]);
 
-        if($request->phone){
-            $user = User::where('phone', $request->phone)->first();
-        } else {
-            $user = User::where('email', $request->email)->first();
+        try {
+            // Find user by phone or email
+            if ($request->phone) {
+                $user = User::where('phone', $request->phone)->first();
+            } else {
+                $user = User::where('email', $request->email)->first();
+            }
+
+            if (!$user) {
+                return response()->json(['message' => 'User not found'], 404);
+            }
+
+            // Check if user is already verified
+            if ($user->verified) {
+                return response()->json(['message' => 'Account is already verified'], 400);
+            }
+
+            // Validate verification token using the new helper method
+            if (!$user->isValidVerificationToken($request->otp)) {
+                Log::warning('Invalid verification token attempt', [
+                    'user_id' => $user->id,
+                    'provided_token' => $request->otp,
+                    'stored_token' => $user->verification_token,
+                    'expiry' => $user->verification_token_expiry
+                ]);
+
+                return response()->json(['message' => 'Invalid or expired verification token'], 400);
+            }
+
+            // Clear verification token and mark as verified
+            $user->clearVerificationToken();
+            $user->update(['verified' => true]);
+
+            Log::info('Account verified successfully', [
+                'user_id' => $user->id,
+                'email' => $user->email
+            ]);
+
+            // Return JWT token for immediate login
+            return $this->respondWithToken(auth("api")->login($user));
+        } catch (\Exception $e) {
+            Log::error('Account verification failed', [
+                'error' => $e->getMessage(),
+                'email' => $request->email ?? null,
+                'phone' => $request->phone ?? null
+            ]);
+
+            return response()->json([
+                'message' => 'Verification failed. Please try again.',
+                'success' => false
+            ], 500);
         }
-
-        if (!$user) {
-            return response()->json(['message' => 'User not found'], 404);
-        }
-
-        // Check if token is valid and not expired
-        if ($user->reset_token !== $request->otp || $user->reset_token_expiry < now()) {
-            return response()->json(['message' => 'Invalid or expired reset token'], 400);
-        }
-
-        $user->update([
-            'reset_token' => null,
-            'reset_token_expiry' => null,
-            'verified' => true
-        ]);
-
-        return $this->respondWithToken(auth("api")->login($user));
     }
 
     /**
@@ -188,18 +251,18 @@ class AuthController extends Controller
     {
         $credentials = request(['email', 'password']);
         $user = User::where("email", "=", $credentials["email"]);
-        
-        if($user->count() > 0 && $user->first()["blocked"] == true) {
+
+        if ($user->count() > 0 && $user->first()["blocked"] == true) {
             return response()->json(['error' => 'Account is blocked'], 403);
         }
-        if($user->count() > 0 && $user->first()["verified"] == false) {
+        if ($user->count() > 0 && $user->first()["verified"] == false) {
             return response()->json(['error' => 'Account is not verified'], 401);
         }
 
         if (!$token = auth("api")->attempt($credentials)) {
             return response()->json(['error' => 'Unauthorized'], 401);
         }
-        
+
         if (request("device_token")) {
             $user->update(["device_token" => request("device_token")]);
         }
@@ -217,15 +280,15 @@ class AuthController extends Controller
         $user = auth("api")->user();
         $_active = Service::where([["user_id", "=", $user["id"]]]);
         $active = false;
-        
-        if($_active->count() > 0) {
+
+        if ($_active->count() > 0) {
             $active = $_active->first()->active;
         }
-        
+
         $user["active"] = $active;
         unset($user["verified_liscence"]);
         unset($user["location"]);
-        
+
         return response()->json($user);
     }
 
@@ -243,7 +306,7 @@ class AuthController extends Controller
         ]);
 
         $user = auth("api")->user();
-        
+
         if (!$user) {
             return response()->json([
                 'message' => 'User not found',
@@ -296,10 +359,9 @@ class AuthController extends Controller
                 'success' => true,
                 'deleted_at' => now()->toISOString()
             ], 200);
-
         } catch (\Exception $e) {
             DB::rollBack();
-            
+
             Log::error('Account deletion failed', [
                 'user_id' => $user->id,
                 'error' => $e->getMessage(),
@@ -359,7 +421,6 @@ class AuthController extends Controller
 
             // Delete general user-related data
             $this->cleanupGeneralUserData($user);
-
         } catch (\Exception $e) {
             Log::error('User data cleanup failed', [
                 'user_id' => $user->id,
@@ -369,39 +430,39 @@ class AuthController extends Controller
         }
     }
 
-/**
- * Cleanup worker-specific data
- */
-private function cleanupWorkerData($user)
-{
-    // Get all service IDs for this worker
-    $serviceIds = DB::table('services')->where('user_id', $user->id)->pluck('id')->toArray();
-    
-    if (!empty($serviceIds)) {
-        // Delete service_earnings for orders placed on their services
-        DB::statement("DELETE FROM service_earnings WHERE order_id IN (SELECT id FROM 'order' WHERE service_id IN (" . implode(',', $serviceIds) . "))");
-        
-        // Delete orders placed for their services
-        DB::table('order')->whereIn('service_id', $serviceIds)->delete();
-        
-        // Delete ratings received on their services
-        DB::table('rating')->whereIn('service_id', $serviceIds)->delete();
-        
-        // Delete service gallery images
-        foreach ($serviceIds as $serviceId) {
-            $galleries = ServiceGallary::where('service_id', $serviceId)->get();
-            foreach ($galleries as $gallery) {
-                if ($gallery->image) {
-                    Storage::delete('public/images/' . $gallery->image);
+    /**
+     * Cleanup worker-specific data
+     */
+    private function cleanupWorkerData($user)
+    {
+        // Get all service IDs for this worker
+        $serviceIds = DB::table('services')->where('user_id', $user->id)->pluck('id')->toArray();
+
+        if (!empty($serviceIds)) {
+            // Delete service_earnings for orders placed on their services
+            DB::statement("DELETE FROM service_earnings WHERE order_id IN (SELECT id FROM 'order' WHERE service_id IN (" . implode(',', $serviceIds) . "))");
+
+            // Delete orders placed for their services
+            DB::table('order')->whereIn('service_id', $serviceIds)->delete();
+
+            // Delete ratings received on their services
+            DB::table('rating')->whereIn('service_id', $serviceIds)->delete();
+
+            // Delete service gallery images
+            foreach ($serviceIds as $serviceId) {
+                $galleries = ServiceGallary::where('service_id', $serviceId)->get();
+                foreach ($galleries as $gallery) {
+                    if ($gallery->image) {
+                        Storage::delete('public/images/' . $gallery->image);
+                    }
                 }
+                ServiceGallary::where('service_id', $serviceId)->delete();
             }
-            ServiceGallary::where('service_id', $serviceId)->delete();
+
+            // Finally delete the services themselves
+            Service::where('user_id', $user->id)->delete();
         }
-        
-        // Finally delete the services themselves
-        Service::where('user_id', $user->id)->delete();
     }
-}
 
     /**
      * Cleanup customer-specific data
@@ -412,26 +473,26 @@ private function cleanupWorkerData($user)
         // Add your customer-specific cleanup logic here
     }
 
-/**
- * Cleanup general user data (applies to both customer and worker)
- */
-private function cleanupGeneralUserData($user)
-{
-    // Delete service_earnings records tied to this user's orders first
-    DB::statement("DELETE FROM service_earnings WHERE order_id IN (SELECT id FROM 'order' WHERE user_id = ?)", [$user->id]);
-    
-    // Delete user's direct service_earnings (if any)
-    DB::table('service_earnings')->where('user_id', $user->id)->delete();
-    
-    // Now we can safely delete the orders
-    DB::table('order')->where('user_id', $user->id)->delete();
-    
-    // Delete user's ratings
-    DB::table('rating')->where('user_id', $user->id)->delete();
-    
-    // Delete user's withdraw requests
-    DB::table('withdraw_requests')->where('user_id', $user->id)->delete();
-}
+    /**
+     * Cleanup general user data (applies to both customer and worker)
+     */
+    private function cleanupGeneralUserData($user)
+    {
+        // Delete service_earnings records tied to this user's orders first
+        DB::statement("DELETE FROM service_earnings WHERE order_id IN (SELECT id FROM 'order' WHERE user_id = ?)", [$user->id]);
+
+        // Delete user's direct service_earnings (if any)
+        DB::table('service_earnings')->where('user_id', $user->id)->delete();
+
+        // Now we can safely delete the orders
+        DB::table('order')->where('user_id', $user->id)->delete();
+
+        // Delete user's ratings
+        DB::table('rating')->where('user_id', $user->id)->delete();
+
+        // Delete user's withdraw requests
+        DB::table('withdraw_requests')->where('user_id', $user->id)->delete();
+    }
 
 
     /**
@@ -440,19 +501,19 @@ private function cleanupGeneralUserData($user)
     private function isDefaultImage($imageName)
     {
         $defaultImages = [];
-        
+
         // Get default customer image
         $customerImage = AppSetting::where("key", "=", "customer-image")->first();
         if ($customerImage) {
             $defaultImages[] = $customerImage->value;
         }
-        
+
         // Get default provider image
         $providerImage = AppSetting::where("key", "=", "provider-image")->first();
         if ($providerImage) {
             $defaultImages[] = $providerImage->value;
         }
-        
+
         return in_array($imageName, $defaultImages);
     }
 
@@ -463,7 +524,7 @@ private function cleanupGeneralUserData($user)
     {
         try {
             Mail::to($userEmail)->send(new AccountDeletionMail($userFullName, $userType));
-            
+
             Log::info('Account deletion confirmation email sent', [
                 'email' => $userEmail
             ]);
@@ -515,6 +576,43 @@ private function cleanupGeneralUserData($user)
         $token = rand(100000, 999999);
         $user->update(['reset_token' => $token, 'reset_token_expiry' => now()->addMinutes(5)]);
         return $token;
+    }
+
+    /**
+     * Create verification token for email verification (separate from password reset)
+     */
+    protected function createVerificationToken($email)
+    {
+        $user = User::where('email', $email)->first();
+
+        if (!$user) {
+            return null;
+        }
+
+        // Generate a random 6-digit token for email verification
+        $token = (string) rand(100000, 999999);
+
+        // Store in verification token fields (NOT reset token fields)
+        $user->update([
+            'verification_token' => $token,
+            'verification_token_expiry' => now()->addMinutes(15) // 15 minutes for better UX
+        ]);
+
+        Log::info('Verification token created', [
+            'user_id' => $user->id,
+            'email' => $email,
+            'expires_at' => now()->addMinutes(15)
+        ]);
+
+        return $token;
+    }
+
+    /**
+     * Send verification OTP email (separate from password reset)
+     */
+    protected function sendVerificationOtp($email, $token)
+    {
+        $this->sendEmail($email, "Your email verification code is: $token. This code expires in 15 minutes.");
     }
 
     /**

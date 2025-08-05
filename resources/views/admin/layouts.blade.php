@@ -625,6 +625,12 @@
         <!-- App Configuration Section -->
         <div class="nav-section">
           <div class="nav-section-title">App Configuration</div>
+          <!-- <div class="nav-item">
+            <a href="{{ route('admin_get_ads') }}" class="nav-link {{ Request::routeIs('admin_get_ads', 'admin_create_ad_form', 'admin_edit_ad_form', 'admin_show_ad_analytics') ? 'active' : '' }}">
+              <i class="fas fa-bullhorn"></i>
+              <span>Advertisement Manager</span>
+            </a>
+          </div> -->
           <div class="nav-item">
             <a href="{{ route('admin_get_categories') }}" class="nav-link {{ Request::routeIs('admin_get_categories', 'admin_create_category_form', 'admin_edit_category_form') ? 'active' : '' }}">
               <i class="fas fa-layer-group"></i>
@@ -655,6 +661,7 @@
               <span>Default Images</span>
             </a>
           </div>
+
 
           <!-- User Management Section -->
           <div class="nav-section">

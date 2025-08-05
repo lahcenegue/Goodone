@@ -15,6 +15,7 @@ use App\Models\AdminActivityLog;
 use App\Models\CustomerSession;
 use App\Models\Message;
 use App\Models\Notification;
+use App\Models\Ad;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
@@ -691,7 +692,7 @@ class AdminController extends Controller
         ];
     }
 
-    
+
     /**
      * Get orders by category data
      */
@@ -3569,5 +3570,575 @@ class AdminController extends Controller
                 'reason' => 'Platform initialization'
             ]
         ];
+    }
+
+    // ===============================
+    // ADVERTISEMENT MANAGEMENT METHODS
+    // ===============================
+
+    /**
+     * Get ads with search, filtering and analytics
+     */
+    public function get_ads(Request $request)
+    {
+        try {
+            // Get filter parameters
+            $search = $request->get('search');
+            $ad_type = $request->get('ad_type', 'all'); // all, internal, external
+            $placement = $request->get('placement', 'all'); // all, home_banner, service_list, etc.
+            $status = $request->get('status', 'all'); // all, active, inactive, scheduled, expired
+            $sort = $request->get('sort', 'created_at');
+            $direction = $request->get('direction', 'desc');
+            $per_page = $request->get('per_page', 12);
+
+            // Base query
+            $query = Ad::query();
+
+            // Search functionality
+            if ($search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('title', 'LIKE', "%{$search}%")
+                        ->orWhere('description', 'LIKE', "%{$search}%")
+                        ->orWhere('target_url', 'LIKE', "%{$search}%");
+                });
+            }
+
+            // Ad type filtering
+            if ($ad_type !== 'all') {
+                $query->where('ad_type', $ad_type);
+            }
+
+            // Placement filtering
+            if ($placement !== 'all') {
+                $query->where('placement', $placement);
+            }
+
+            // Status filtering
+            if ($status !== 'all') {
+                switch ($status) {
+                    case 'active':
+                        $query->where('is_active', true)
+                            ->where(function ($q) {
+                                $q->whereNull('start_date')->orWhere('start_date', '<=', now());
+                            })
+                            ->where(function ($q) {
+                                $q->whereNull('end_date')->orWhere('end_date', '>=', now());
+                            });
+                        break;
+                    case 'inactive':
+                        $query->where('is_active', false);
+                        break;
+                    case 'scheduled':
+                        $query->where('is_active', true)
+                            ->where('start_date', '>', now());
+                        break;
+                    case 'expired':
+                        $query->where('is_active', true)
+                            ->where('end_date', '<', now());
+                        break;
+                }
+            }
+
+            // Sorting
+            $allowedSorts = ['created_at', 'title', 'ad_type', 'placement', 'display_order', 'click_count', 'view_count'];
+            if (in_array($sort, $allowedSorts)) {
+                $ads = $query->orderBy($sort, $direction)->paginate($per_page);
+            } else {
+                $ads = $query->orderBy('created_at', $direction)->paginate($per_page);
+            }
+
+            // Get statistics
+            $stats = [
+                'total_ads' => Ad::count(),
+                'active_ads' => Ad::active()->scheduled()->count(),
+                'internal_ads' => Ad::where('ad_type', Ad::AD_TYPE_INTERNAL)->count(),
+                'external_ads' => Ad::where('ad_type', Ad::AD_TYPE_EXTERNAL)->count(),
+                'total_clicks' => Ad::sum('click_count'),
+                'total_views' => Ad::sum('view_count'),
+                'avg_ctr' => $this->calculateAverageCTR()
+            ];
+
+            return view('admin.app-config.ads.index', compact(
+                'ads',
+                'stats',
+                'search',
+                'ad_type',
+                'placement',
+                'status',
+                'sort',
+                'direction'
+            ));
+        } catch (\Exception $e) {
+            Log::error('Error fetching ads: ' . $e->getMessage());
+            return redirect()->back()->withErrors(['error' => 'Unable to load ads. Please try again.']);
+        }
+    }
+
+    /**
+     * Show create ad form
+     */
+    public function create_ad_form()
+    {
+        return view('admin.app-config.ads.create');
+    }
+
+    /**
+     * Store new ad
+     */
+    public function store_ad(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'title' => 'required|string|max:255',
+                'description' => 'nullable|string|max:1000',
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:5120', // 5MB max
+                'ad_type' => 'required|in:' . implode(',', array_keys(Ad::getAdTypes())),
+                'placement' => 'required|in:' . implode(',', array_keys(Ad::getPlacements())),
+                'target_url' => 'nullable|url|max:500',
+                'is_active' => 'sometimes|boolean',  // FIXED: Changed from 'boolean' to 'sometimes|boolean'
+                'display_order' => 'integer|min:0|max:999',
+                'start_date' => 'nullable|date|after_or_equal:today',
+                'end_date' => 'nullable|date|after_or_equal:start_date'
+            ], [
+                'image.required' => 'Please upload an ad image.',
+                'image.max' => 'Ad image must not exceed 5MB.',
+                'start_date.after_or_equal' => 'Start date must be today or in the future.',
+                'end_date.after_or_equal' => 'End date must be after or equal to start date.',
+                'target_url.url' => 'Please enter a valid URL (including http:// or https://).'
+            ]);
+
+            // Handle image upload
+            if ($request->hasFile('image')) {
+                $file = $request->file('image');
+                $filename = 'ad_' . time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+
+                // Store in storage/app/public/ads directory
+                $file->storeAs('public/ads', $filename);
+                $validated['image'] = $filename;
+            }
+
+            // FIXED: Handle checkbox properly
+            $validated['is_active'] = $request->has('is_active') ? true : false;
+            $validated['display_order'] = $validated['display_order'] ?? 0;
+
+            // FIXED: Convert dates to proper format (removed duplicate code)
+            if (!empty($validated['start_date'])) {
+                $validated['start_date'] = \Carbon\Carbon::parse($validated['start_date']);
+            }
+            if (!empty($validated['end_date'])) {
+                $validated['end_date'] = \Carbon\Carbon::parse($validated['end_date']);
+            }
+
+            $ad = Ad::create($validated);
+
+            return redirect()->route('admin_get_ads')
+                ->with('success', 'Advertisement created successfully.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return redirect()->back()
+                ->withErrors($e->errors())
+                ->withInput();
+        } catch (\Exception $e) {
+            Log::error('Error creating ad: ' . $e->getMessage());
+            return redirect()->back()
+                ->withErrors(['error' => 'Unable to create advertisement. Please try again.'])
+                ->withInput();
+        }
+    }
+
+    /**
+     * Show edit ad form
+     */
+    public function edit_ad_form(Ad $ad)
+    {
+        // Get usage analytics for this ad
+        $analytics = $this->getAdAnalytics($ad);
+
+        return view('admin.app-config.ads.edit', compact('ad', 'analytics'));
+    }
+
+    /**
+     * Update ad - FIXED VERSION
+     */
+    public function update_ad(Request $request, Ad $ad)
+    {
+        try {
+            $validated = $request->validate([
+                'title' => 'required|string|max:255',
+                'description' => 'nullable|string|max:1000',
+                'image' => 'sometimes|image|mimes:jpeg,png,jpg,gif,webp|max:5120', // FIXED: Changed from 'required' to 'sometimes'
+                'ad_type' => 'required|in:' . implode(',', array_keys(Ad::getAdTypes())),
+                'placement' => 'required|in:' . implode(',', array_keys(Ad::getPlacements())),
+                'target_url' => 'nullable|url|max:500',
+                'is_active' => 'sometimes|boolean', // FIXED: Added 'sometimes'
+                'display_order' => 'integer|min:0|max:999',
+                'start_date' => 'nullable|date',
+                'end_date' => 'nullable|date|after_or_equal:start_date'
+            ], [
+                'image.max' => 'Ad image must not exceed 5MB.',
+                'end_date.after_or_equal' => 'End date must be after or equal to start date.',
+                'target_url.url' => 'Please enter a valid URL (including http:// or https://).'
+            ]);
+
+            // Handle image upload ONLY if provided
+            if ($request->hasFile('image')) {
+                // Delete old image if exists
+                if ($ad->image && file_exists(storage_path('app/public/ads/' . $ad->image))) {
+                    unlink(storage_path('app/public/ads/' . $ad->image));
+                }
+
+                $file = $request->file('image');
+                $filename = 'ad_' . time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+                $file->storeAs('public/ads', $filename);
+                $validated['image'] = $filename;
+            }
+            // IMPORTANT: If no new image uploaded, don't change the existing image
+            // Remove image from validated array if not uploading new one
+            elseif (!$request->hasFile('image')) {
+                unset($validated['image']);
+            }
+
+            // FIXED: Handle checkbox properly
+            $validated['is_active'] = $request->has('is_active') ? true : false;
+            $validated['display_order'] = $validated['display_order'] ?? 0;
+
+            // Convert dates to proper format
+            if (!empty($validated['start_date'])) {
+                $validated['start_date'] = \Carbon\Carbon::parse($validated['start_date']);
+            }
+            if (!empty($validated['end_date'])) {
+                $validated['end_date'] = \Carbon\Carbon::parse($validated['end_date']);
+            }
+
+            $ad->update($validated);
+
+            return redirect()->route('admin_get_ads')
+                ->with('success', 'Advertisement updated successfully.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return redirect()->back()
+                ->withErrors($e->errors())
+                ->withInput();
+        } catch (\Exception $e) {
+            Log::error('Error updating ad: ' . $e->getMessage());
+            return redirect()->back()
+                ->withErrors(['error' => 'Unable to update advertisement. Please try again.'])
+                ->withInput();
+        }
+    }
+
+    /**
+     * Toggle ad status (active/inactive)
+     */
+    public function toggle_ad_status(Request $request, Ad $ad)
+    {
+        try {
+            $newStatus = !$ad->is_active;
+            $ad->update(['is_active' => $newStatus]);
+
+            $message = $newStatus ? 'Advertisement activated successfully.' : 'Advertisement deactivated successfully.';
+            return redirect()->back()->with('success', $message);
+        } catch (\Exception $e) {
+            Log::error('Error toggling ad status: ' . $e->getMessage());
+            return redirect()->back()->withErrors(['error' => 'Unable to update advertisement status.']);
+        }
+    }
+
+    /**
+     * Delete ad
+     */
+    public function delete_ad(Request $request, Ad $ad)
+    {
+        try {
+            // Delete ad image if exists
+            if ($ad->image && file_exists(storage_path('app/public/ads/' . $ad->image))) {
+                unlink(storage_path('app/public/ads/' . $ad->image));
+            }
+
+            $ad->delete();
+
+            return redirect()->route('admin_get_ads')
+                ->with('success', 'Advertisement deleted successfully.');
+        } catch (\Exception $e) {
+            Log::error('Error deleting ad: ' . $e->getMessage());
+            return redirect()->back()
+                ->withErrors(['error' => 'Unable to delete advertisement. Please try again.']);
+        }
+    }
+
+    /**
+     * Show ad analytics page
+     */
+    public function show_ad_analytics(Ad $ad)
+    {
+        try {
+            // Calculate analytics data
+            $analytics = $this->calculateAdAnalytics($ad);
+
+            return view('admin.app-config.ads.analytics', compact('ad', 'analytics'));
+        } catch (\Exception $e) {
+            Log::error('Error loading ad analytics', [
+                'ad_id' => $ad->id,
+                'error' => $e->getMessage()
+            ]);
+
+            return redirect()->back()
+                ->withErrors(['error' => 'Unable to load analytics.']);
+        }
+    }
+
+    /**
+     * Calculate analytics data for an ad
+     */
+    private function calculateAdAnalytics(Ad $ad)
+    {
+        $now = now();
+        $createdAt = $ad->created_at;
+
+        return [
+            'basic_stats' => [
+                'total_views' => $ad->view_count,
+                'total_clicks' => $ad->click_count,
+                'ctr' => $ad->view_count > 0 ? round(($ad->click_count / $ad->view_count) * 100, 2) : 0,
+                'days_active' => $createdAt->diffInDays($now),
+                'avg_daily_views' => $createdAt->diffInDays($now) > 0 ?
+                    round($ad->view_count / max(1, $createdAt->diffInDays($now)), 1) : $ad->view_count,
+                'avg_daily_clicks' => $createdAt->diffInDays($now) > 0 ?
+                    round($ad->click_count / max(1, $createdAt->diffInDays($now)), 1) : $ad->click_count,
+            ],
+            'performance_metrics' => [
+                'performance_score' => $this->calculatePerformanceScore($ad),
+                'engagement_level' => $this->getEngagementLevel($ad),
+                'status' => $ad->status,
+                'is_currently_active' => $ad->isCurrentlyActive(),
+            ],
+            'comparison_data' => [
+                'platform_avg_ctr' => $this->getPlatformAverageCTR(),
+                'placement_avg_ctr' => $this->getPlacementAverageCTR($ad->placement),
+                'ad_type_avg_ctr' => $this->getAdTypeAverageCTR($ad->ad_type),
+            ],
+            'time_periods' => [
+                'last_7_days' => $this->getTimePeriodStats($ad, 7),
+                'last_30_days' => $this->getTimePeriodStats($ad, 30),
+                'all_time' => [
+                    'views' => $ad->view_count,
+                    'clicks' => $ad->click_count,
+                    'ctr' => $ad->view_count > 0 ? round(($ad->click_count / $ad->view_count) * 100, 2) : 0,
+                ]
+            ]
+        ];
+    }
+
+    /**
+     * Calculate performance score for an ad
+     */
+    private function calculatePerformanceScore(Ad $ad): float
+    {
+        // Base score on CTR (40%), total views (30%), and recency (30%)
+        $ctr = $ad->view_count > 0 ? ($ad->click_count / $ad->view_count) * 100 : 0;
+        $viewScore = min($ad->view_count / 100, 10); // Max 10 points for views
+        $ageScore = max(0, 10 - $ad->created_at->diffInDays(now()) / 30); // Newer = higher score
+
+        $totalScore = ($ctr * 0.4) + ($viewScore * 0.3) + ($ageScore * 0.3);
+
+        return round($totalScore, 1);
+    }
+
+    /**
+     * Get engagement level description
+     */
+    private function getEngagementLevel(Ad $ad): string
+    {
+        $ctr = $ad->view_count > 0 ? ($ad->click_count / $ad->view_count) * 100 : 0;
+
+        if ($ctr >= 10) return 'Excellent';
+        if ($ctr >= 5) return 'Good';
+        if ($ctr >= 2) return 'Average';
+        if ($ctr >= 1) return 'Below Average';
+        return 'Poor';
+    }
+
+    /**
+     * Get platform average CTR
+     */
+    private function getPlatformAverageCTR(): float
+    {
+        $totalViews = Ad::sum('view_count');
+        $totalClicks = Ad::sum('click_count');
+
+        return $totalViews > 0 ? round(($totalClicks / $totalViews) * 100, 2) : 0;
+    }
+
+    /**
+     * Get placement average CTR
+     */
+    private function getPlacementAverageCTR(string $placement): float
+    {
+        $ads = Ad::where('placement', $placement)->get();
+        $totalViews = $ads->sum('view_count');
+        $totalClicks = $ads->sum('click_count');
+
+        return $totalViews > 0 ? round(($totalClicks / $totalViews) * 100, 2) : 0;
+    }
+
+    /**
+     * Get ad type average CTR
+     */
+    private function getAdTypeAverageCTR(string $adType): float
+    {
+        $ads = Ad::where('ad_type', $adType)->get();
+        $totalViews = $ads->sum('view_count');
+        $totalClicks = $ads->sum('click_count');
+
+        return $totalViews > 0 ? round(($totalClicks / $totalViews) * 100, 2) : 0;
+    }
+
+    /**
+     * Get stats for specific time period (simplified - you can enhance this with actual date-based queries)
+     */
+    private function getTimePeriodStats(Ad $ad, int $days): array
+    {
+        // Since we don't have time-series data, we'll simulate based on age
+        $adAge = $ad->created_at->diffInDays(now());
+
+        if ($adAge < $days) {
+            // Ad is newer than the period, return all stats
+            return [
+                'views' => $ad->view_count,
+                'clicks' => $ad->click_count,
+                'ctr' => $ad->view_count > 0 ? round(($ad->click_count / $ad->view_count) * 100, 2) : 0,
+            ];
+        } else {
+            // Estimate stats for the period (this is simplified - in production you'd want time-series data)
+            $periodRatio = $days / $adAge;
+            $estimatedViews = round($ad->view_count * $periodRatio);
+            $estimatedClicks = round($ad->click_count * $periodRatio);
+
+            return [
+                'views' => $estimatedViews,
+                'clicks' => $estimatedClicks,
+                'ctr' => $estimatedViews > 0 ? round(($estimatedClicks / $estimatedViews) * 100, 2) : 0,
+            ];
+        }
+    }
+
+    /**
+     * Preview ad image for upload validation
+     */
+    public function preview_ad_image(Request $request)
+    {
+        try {
+            $request->validate([
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:5120'
+            ]);
+
+            $file = $request->file('image');
+            $filename = 'preview_ad_' . time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+
+            // Store temporarily
+            $path = $file->storeAs('public/temp', $filename);
+
+            return response()->json([
+                'success' => true,
+                'preview_url' => asset('storage/temp/' . $filename),
+                'filename' => $filename,
+                'size' => $this->formatFileSize($file->getSize()),
+                'dimensions' => $this->getImageDimensions($file)
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to process image: ' . $e->getMessage()
+            ], 400);
+        }
+    }
+
+    /**
+     * Calculate average CTR (Click Through Rate)
+     */
+    private function calculateAverageCTR()
+    {
+        $totalViews = Ad::sum('view_count');
+        $totalClicks = Ad::sum('click_count');
+
+        if ($totalViews == 0) {
+            return 0;
+        }
+
+        return round(($totalClicks / $totalViews) * 100, 2);
+    }
+
+    /**
+     * Get basic analytics for an ad
+     */
+    private function getAdAnalytics(Ad $ad)
+    {
+        $ctr = 0;
+        if ($ad->view_count > 0) {
+            $ctr = round(($ad->click_count / $ad->view_count) * 100, 2);
+        }
+
+        return [
+            'total_views' => $ad->view_count,
+            'total_clicks' => $ad->click_count,
+            'ctr' => $ctr,
+            'status' => $ad->status,
+            'days_active' => $ad->created_at->diffInDays(now()),
+            'avg_daily_views' => $ad->created_at->diffInDays(now()) > 0
+                ? round($ad->view_count / $ad->created_at->diffInDays(now()), 1)
+                : 0
+        ];
+    }
+
+    /**
+     * Get detailed analytics for an ad
+     */
+    private function getDetailedAdAnalytics(Ad $ad)
+    {
+        $analytics = $this->getAdAnalytics($ad);
+
+        // Add more detailed metrics
+        $analytics['performance_rating'] = $this->calculatePerformanceRating($ad);
+        $analytics['compared_to_average'] = $this->compareToAveragePerformance($ad);
+
+        return $analytics;
+    }
+
+    /**
+     * Calculate performance rating for an ad
+     */
+    private function calculatePerformanceRating(Ad $ad)
+    {
+        $ctr = 0;
+        if ($ad->view_count > 0) {
+            $ctr = ($ad->click_count / $ad->view_count) * 100;
+        }
+
+        if ($ctr >= 5) return 'Excellent';
+        if ($ctr >= 2) return 'Good';
+        if ($ctr >= 1) return 'Average';
+        if ($ctr > 0) return 'Below Average';
+        return 'Poor';
+    }
+
+    /**
+     * Compare ad performance to platform average
+     */
+    private function compareToAveragePerformance(Ad $ad)
+    {
+        $avgCTR = $this->calculateAverageCTR();
+        $adCTR = $ad->view_count > 0 ? ($ad->click_count / $ad->view_count) * 100 : 0;
+
+        if ($avgCTR == 0) {
+            return 'No comparison data';
+        }
+
+        $difference = $adCTR - $avgCTR;
+
+        if ($difference > 1) {
+            return 'Above average (+' . round($difference, 1) . '%)';
+        } elseif ($difference < -1) {
+            return 'Below average (' . round($difference, 1) . '%)';
+        } else {
+            return 'Average performance';
+        }
     }
 }

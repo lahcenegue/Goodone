@@ -113,6 +113,33 @@ Route::middleware(['admin.auth'])->group(function () {
     Route::post('/admin/app-config/default-images', [AdminController::class, 'update_default_images'])->name('admin_update_default_images');
     Route::post('/admin/app-config/default-images/reset', [AdminController::class, 'reset_default_images'])->name('admin_reset_default_images');
     Route::post('/admin/app-config/default-images/preview', [AdminController::class, 'preview_image'])->name('admin_preview_image');
+
+    // ===============================
+    // 5. ADVERTISEMENT MANAGEMENT ROUTES
+    // ===============================
+
+    // Ads listing and search
+    Route::get('/admin/app-config/ads', [AdminController::class, 'get_ads'])->name('admin_get_ads');
+
+    // Ads creation
+    Route::get('/admin/app-config/ads/create', [AdminController::class, 'create_ad_form'])->name('admin_create_ad_form');
+    Route::post('/admin/app-config/ads', [AdminController::class, 'store_ad'])->name('admin_store_ad');
+
+    // Ads editing
+    Route::get('/admin/app-config/ads/{ad}/edit', [AdminController::class, 'edit_ad_form'])->name('admin_edit_ad_form');
+    Route::put('/admin/app-config/ads/{ad}', [AdminController::class, 'update_ad'])->name('admin_update_ad');
+
+    // Ads status management
+    Route::post('/admin/app-config/ads/{ad}/toggle-status', [AdminController::class, 'toggle_ad_status'])->name('admin_toggle_ad_status');
+
+    // Ads deletion
+    Route::delete('/admin/app-config/ads/{ad}', [AdminController::class, 'delete_ad'])->name('admin_delete_ad');
+
+    // Ads analytics
+    Route::get('/admin/app-config/ads/{ad}/analytics', [AdminController::class, 'show_ad_analytics'])->name('admin_show_ad_analytics');
+
+    // Ads image preview (for upload validation)
+    Route::post('/admin/app-config/ads/preview-image', [AdminController::class, 'preview_ad_image'])->name('admin_preview_ad_image');
 });
 
 /*

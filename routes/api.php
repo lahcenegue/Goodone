@@ -38,7 +38,7 @@ Route::group([
     Route::post('service/rate', [ServiceController::class, "rate_service"])->name("api:rate_service");
     Route::post('service/create', [ServiceController::class, "create_service"])->name("api:create_service");
     Route::post('service/edit', [ServiceController::class, "edit_service"])->name("api:edit_service");
-    
+
     Route::post('service/order', [ServiceController::class, "order_service"])->name("api:order_service");
     Route::post('service/order/update', [ServiceController::class, "update_order"])->name("api:update_order");
     Route::get('user/orders', [ServiceController::class, "get_orders"])->name("api:get_orders");
@@ -53,23 +53,22 @@ Route::group([
     Route::post('user/notifications/mark-read', [ServiceController::class, 'mark_notifications_as_read'])->name("api:mark_notifications_as_read");
     Route::post('user/notifications/mark-all-read', [ServiceController::class, 'mark_all_notifications_as_read'])->name("api:mark_all_notifications_as_read");
 
-        Route::get('user/balance', [ServiceController::class, "get_balance"])->name("api:get_balance");
-        Route::post('user/balance/withdraw', [ServiceController::class, "withdraw_balance"])->name("api:withdraw_balance");
-        Route::get('user/balance/withdraw/requests', [ServiceController::class, "check_withdraw_status"])->name("api:check_withdraw_status");
-        Route::get('user/earnings/history', [ServiceController::class, 'get_earnings_history'])->name("api:get_earnings_history");
-        Route::get('user/earnings/summary', [ServiceController::class, 'get_earnings_summary'])->name("api:get_earnings_summary");
+    Route::get('user/balance', [ServiceController::class, "get_balance"])->name("api:get_balance");
+    Route::post('user/balance/withdraw', [ServiceController::class, "withdraw_balance"])->name("api:withdraw_balance");
+    Route::get('user/balance/withdraw/requests', [ServiceController::class, "check_withdraw_status"])->name("api:check_withdraw_status");
+    Route::get('user/earnings/history', [ServiceController::class, 'get_earnings_history'])->name("api:get_earnings_history");
+    Route::get('user/earnings/summary', [ServiceController::class, 'get_earnings_summary'])->name("api:get_earnings_summary");
     Route::get('service/orders', [ServiceController::class, "get_service_orders"])->name("api:get_service_orders");
 
     Route::post('service/order/complete', [ServiceController::class, "complete_order"])->name("api:complete_order");
     Route::post('service/order/cancel', [ServiceController::class, "cancel_order"])->name("api:cancel_order");
 
     Route::post('coupons/check', [ServiceController::class, "check_coupon"])->name("api:check_coupon");
-    
+
 
     // chats
     Route::get('chat', [MessageController::class, "get_chats"])->name("api:get_chats");
     Route::post('chat/new_chat', [MessageController::class, "intiate_chat"])->name("api:intiate_chat");
-
 });
 
 // No auth
@@ -94,7 +93,45 @@ Route::group([
 
     // Route::post('notification/all', [PushNotification::class, "notify_all"])->name("api:notify_all");
     Route::post('notification/{user_id}', [PushNotification::class, "notify_user"])->name("api:notify_user");
-    
+
+    // ===============================
+    // ADVERTISEMENT API ENDPOINTS
+    // ===============================
+
+    // Get ads by placement (for specific app screens)
+    Route::get('ads/placement/{placement}', [App\Http\Controllers\AdApiController::class, 'getAdsByPlacement'])
+        ->name('api:ads_by_placement');
+
+    // Get all active ads (with optional filtering)
+    Route::get('ads', [App\Http\Controllers\AdApiController::class, 'getAllActiveAds'])
+        ->name('api:all_ads');
+
+    // Get specific ad details
+    Route::get('ads/{id}', [App\Http\Controllers\AdApiController::class, 'getAdDetails'])
+        ->name('api:ad_details');
+
+    // Record ad click (for analytics)
+    Route::post('ads/{id}/click', [App\Http\Controllers\AdApiController::class, 'recordAdClick'])
+        ->name('api:record_ad_click');
+
+    // Get available placements
+    Route::get('ads/placements/available', [App\Http\Controllers\AdApiController::class, 'getAvailablePlacements'])
+        ->name('api:available_placements');
+
+    // Enhanced ad serving endpoints
+    Route::post('ads/smart', [App\Http\Controllers\AdApiController::class, 'getSmartAds'])
+        ->name('api:smart_ads');
+
+    Route::post('ads/targeted', [App\Http\Controllers\AdApiController::class, 'getTargetedAds'])
+        ->name('api:targeted_ads');
+
+    // Batch interaction recording
+    Route::post('ads/interactions/batch', [App\Http\Controllers\AdApiController::class, 'batchRecordInteractions'])
+        ->name('api:batch_interactions');
+
+    // Analytics endpoint
+    Route::get('ads/analytics', [App\Http\Controllers\AdApiController::class, 'getAdAnalytics'])
+        ->name('api:ad_analytics');
 });
 
 
@@ -112,8 +149,8 @@ Route::group([
     Route::post('logout', [AuthController::class, "logout"])->name("api:logout");
     Route::post('refresh', [AuthController::class, "refresh"])->name("api:refresh");
     Route::post('me', [AuthController::class, "me"])->name("api:me");
-    
+
     Route::post('password/reset/code', [SmsPasswordResetController::class, 'sendResetCode']);  // Send SMS reset code
-    Route::post('password/reset', [SmsPasswordResetController::class, 'resetPassword']);  
+    Route::post('password/reset', [SmsPasswordResetController::class, 'resetPassword']);
     Route::post('deleteAccount', [AuthController::class, "delete_account"])->middleware('auth:api')->name("api:delete_account");
 });
